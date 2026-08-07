@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+<title>Getting started with commons</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+
+
+<style type="text/css">
+code {
+white-space: pre;
+}
+.sourceCode {
+overflow: visible;
+}
+</style>
+<style type="text/css" data-origin="pandoc">
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+<script>
+// apply pandoc div.sourceCode style to pre.sourceCode instead
+(function() {
+  var sheets = document.styleSheets;
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].ownerNode.dataset["origin"] !== "pandoc") continue;
+    try { var rules = sheets[i].cssRules; } catch (e) { continue; }
+    var j = 0;
+    while (j < rules.length) {
+      var rule = rules[j];
+      // check if there is a div.sourceCode rule
+      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") {
+        j++;
+        continue;
+      }
+      var style = rule.style.cssText;
+      // check if color or background-color is set
+      if (rule.style.color === '' && rule.style.backgroundColor === '') {
+        j++;
+        continue;
+      }
+      // replace div.sourceCode by a pre.sourceCode rule
+      sheets[i].deleteRule(j);
+      sheets[i].insertRule('pre.sourceCode{' + style + '}', j);
+    }
+  }
+})();
+</script>
+
+
+
+
+<style type="text/css">body {
+background-color: #fff;
+margin: 1em auto;
+max-width: 700px;
+overflow: visible;
+padding-left: 2em;
+padding-right: 2em;
+font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+font-size: 14px;
+line-height: 1.35;
+}
+#TOC {
+clear: both;
+margin: 0 0 10px 10px;
+padding: 4px;
+width: 400px;
+border: 1px solid #CCCCCC;
+border-radius: 5px;
+background-color: #f6f6f6;
+font-size: 13px;
+line-height: 1.3;
+}
+#TOC .toctitle {
+font-weight: bold;
+font-size: 15px;
+margin-left: 5px;
+}
+#TOC ul {
+padding-left: 40px;
+margin-left: -1.5em;
+margin-top: 5px;
+margin-bottom: 5px;
+}
+#TOC ul ul {
+margin-left: -2em;
+}
+#TOC li {
+line-height: 16px;
+}
+table {
+margin: 1em auto;
+border-width: 1px;
+border-color: #DDDDDD;
+border-style: outset;
+border-collapse: collapse;
+}
+table th {
+border-width: 2px;
+padding: 5px;
+border-style: inset;
+}
+table td {
+border-width: 1px;
+border-style: inset;
+line-height: 18px;
+padding: 5px 5px;
+}
+table, table th, table td {
+border-left-style: none;
+border-right-style: none;
+}
+table thead, table tr.even {
+background-color: #f7f7f7;
+}
+p {
+margin: 0.5em 0;
+}
+blockquote {
+background-color: #f6f6f6;
+padding: 0.25em 0.75em;
+}
+hr {
+border-style: solid;
+border: none;
+border-top: 1px solid #777;
+margin: 28px 0;
+}
+dl {
+margin-left: 0;
+}
+dl dd {
+margin-bottom: 13px;
+margin-left: 13px;
+}
+dl dt {
+font-weight: bold;
+}
+ul {
+margin-top: 0;
+}
+ul li {
+list-style: circle outside;
+}
+ul ul {
+margin-bottom: 0;
+}
+pre, code {
+background-color: #f7f7f7;
+border-radius: 3px;
+color: #333;
+white-space: pre-wrap; 
+}
+pre {
+border-radius: 3px;
+margin: 5px 0px 10px 0px;
+padding: 10px;
+}
+pre:not([class]) {
+background-color: #f7f7f7;
+}
+code {
+font-family: Consolas, Monaco, 'Courier New', monospace;
+font-size: 85%;
+}
+p > code, li > code {
+padding: 2px 0px;
+}
+div.figure {
+text-align: center;
+}
+img {
+background-color: #FFFFFF;
+padding: 2px;
+border: 1px solid #DDDDDD;
+border-radius: 3px;
+border: 1px solid #CCCCCC;
+margin: 0 5px;
+}
+h1 {
+margin-top: 0;
+font-size: 35px;
+line-height: 40px;
+}
+h2 {
+border-bottom: 4px solid #f7f7f7;
+padding-top: 10px;
+padding-bottom: 2px;
+font-size: 145%;
+}
+h3 {
+border-bottom: 2px solid #f7f7f7;
+padding-top: 10px;
+font-size: 120%;
+}
+h4 {
+border-bottom: 1px solid #f7f7f7;
+margin-left: 8px;
+font-size: 105%;
+}
+h5, h6 {
+border-bottom: 1px solid #ccc;
+font-size: 105%;
+}
+a {
+color: #0033dd;
+text-decoration: none;
+}
+a:hover {
+color: #6666ff; }
+a:visited {
+color: #800080; }
+a:visited:hover {
+color: #BB00BB; }
+a[href^="http:"] {
+text-decoration: underline; }
+a[href^="https:"] {
+text-decoration: underline; }
+
+code > span.kw { color: #555; font-weight: bold; } 
+code > span.dt { color: #902000; } 
+code > span.dv { color: #40a070; } 
+code > span.bn { color: #d14; } 
+code > span.fl { color: #d14; } 
+code > span.ch { color: #d14; } 
+code > span.st { color: #d14; } 
+code > span.co { color: #888888; font-style: italic; } 
+code > span.ot { color: #007020; } 
+code > span.al { color: #ff0000; font-weight: bold; } 
+code > span.fu { color: #900; font-weight: bold; } 
+code > span.er { color: #a61717; background-color: #e3d2d2; } 
+</style>
+
+
+
+
+</head>
+
+<body>
+
+
+
+
+<h1 class="title toc-ignore">Getting started with commons</h1>
+
+
+
+<p>A commons agent combines one or more <code>data_source()</code>
+objects with a <code>semantic_layer()</code> of governed calculations.
+For each question, the agent searches the semantic layer first. If a
+measure matches, the agent runs a calculation defined by your data team.
+Otherwise, it reads the data documentation, inspects the relevant
+tables, and writes a SQL query.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">library</span>(commons)</span></code></pre></div>
+<div id="connecting-a-data-source" class="section level2">
+<h2>Connecting a data source</h2>
+<p>A data source wraps a DBI connection. The agent queries the database
+directly, without copying its data.</p>
+<p>The examples use a small in-process DuckDB database.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a>con <span class="ot">&lt;-</span> DBI<span class="sc">::</span><span class="fu">dbConnect</span>(duckdb<span class="sc">::</span><span class="fu">duckdb</span>())</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a></span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbWriteTable</span>(con, <span class="st">&quot;orders&quot;</span>, <span class="fu">data.frame</span>(</span>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a>  <span class="at">order_id =</span> <span class="dv">1</span><span class="sc">:</span><span class="dv">6</span>,</span>
+<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a>  <span class="at">rep =</span> <span class="fu">c</span>(<span class="st">&quot;Ada&quot;</span>, <span class="st">&quot;Ada&quot;</span>, <span class="st">&quot;Bo&quot;</span>, <span class="st">&quot;Cy&quot;</span>, <span class="st">&quot;Bo&quot;</span>, <span class="st">&quot;Ada&quot;</span>),</span>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a>  <span class="at">region =</span> <span class="fu">c</span>(<span class="st">&quot;EMEA&quot;</span>, <span class="st">&quot;Americas&quot;</span>, <span class="st">&quot;EMEA&quot;</span>, <span class="st">&quot;APAC&quot;</span>, <span class="st">&quot;Americas&quot;</span>, <span class="st">&quot;EMEA&quot;</span>),</span>
+<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a>  <span class="at">revenue =</span> <span class="fu">c</span>(<span class="dv">500</span>, <span class="dv">900</span>, <span class="dv">1200</span>, <span class="dv">300</span>, <span class="dv">2000</span>, <span class="dv">750</span>),</span>
+<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a>  <span class="at">refunded =</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">100</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">50</span>)</span>
+<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a>))</span>
+<span id="cb2-10"><a href="#cb2-10" tabindex="-1"></a></span>
+<span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a>DBI<span class="sc">::</span><span class="fu">dbWriteTable</span>(con, <span class="st">&quot;reps&quot;</span>, <span class="fu">data.frame</span>(</span>
+<span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a>  <span class="at">rep =</span> <span class="fu">c</span>(<span class="st">&quot;Ada&quot;</span>, <span class="st">&quot;Bo&quot;</span>, <span class="st">&quot;Cy&quot;</span>),</span>
+<span id="cb2-13"><a href="#cb2-13" tabindex="-1"></a>  <span class="at">hired =</span> <span class="fu">as.Date</span>(<span class="fu">c</span>(<span class="st">&quot;2021-03-01&quot;</span>, <span class="st">&quot;2023-07-15&quot;</span>, <span class="st">&quot;2024-01-20&quot;</span>))</span>
+<span id="cb2-14"><a href="#cb2-14" tabindex="-1"></a>))</span></code></pre></div>
+<p>By default, every table on the connection is listed in the system
+prompt:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="fu">data_source</span>(con)<span class="sc">$</span>tables</span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a><span class="co">#&gt; [1] &quot;orders&quot; &quot;reps&quot;</span></span></code></pre></div>
+<p>In production, list only the relevant tables and open a read-only
+connection where the backend supports it:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">data_source</span>(con, <span class="at">tables =</span> <span class="fu">c</span>(<span class="st">&quot;orders&quot;</span>, <span class="st">&quot;reps&quot;</span>))<span class="sc">$</span>tables</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="co">#&gt; [1] &quot;orders&quot; &quot;reps&quot;</span></span></code></pre></div>
+<p><code>tables</code> also accepts schema-qualified names like
+<code>&quot;analytics.orders&quot;</code> or <code>DBI::Id()</code> objects.</p>
+</div>
+<div id="documenting-the-data" class="section level2">
+<h2>Documenting the data</h2>
+<p>Table names rarely provide enough context. A data dictionary in the
+<a href="https://data-dict.tidyverse.org/">data-dict.yaml</a> format
+describes what each table’s rows represent, what its columns mean, how
+tables join, and what your organization’s domain terms mean.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a>dictionary <span class="ot">&lt;-</span> <span class="fu">tempfile</span>(<span class="at">fileext =</span> <span class="st">&quot;.yaml&quot;</span>)</span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a><span class="fu">writeLines</span>(</span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a>  <span class="st">&#39;</span></span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a><span class="st">name: Sales</span></span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a><span class="st">description: One row per closed order, plus the reps who closed them.</span></span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a><span class="st">details: &gt;</span></span>
+<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a><span class="st">  Revenue figures are gross. Net revenue subtracts the refunded column;</span></span>
+<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a><span class="st">  always report net revenue unless asked otherwise.</span></span>
+<span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a><span class="st">tables:</span></span>
+<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a><span class="st">  - name: orders</span></span>
+<span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a><span class="st">    description: Closed orders, one row each.</span></span>
+<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a><span class="st">    columns:</span></span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a><span class="st">      - name: revenue</span></span>
+<span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a><span class="st">        type: number</span></span>
+<span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a><span class="st">        units: USD</span></span>
+<span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a><span class="st">        description: Gross revenue for the order.</span></span>
+<span id="cb5-17"><a href="#cb5-17" tabindex="-1"></a><span class="st">      - name: refunded</span></span>
+<span id="cb5-18"><a href="#cb5-18" tabindex="-1"></a><span class="st">        type: number</span></span>
+<span id="cb5-19"><a href="#cb5-19" tabindex="-1"></a><span class="st">        units: USD</span></span>
+<span id="cb5-20"><a href="#cb5-20" tabindex="-1"></a><span class="st">        description: Amount refunded against the order.</span></span>
+<span id="cb5-21"><a href="#cb5-21" tabindex="-1"></a><span class="st">      - name: region</span></span>
+<span id="cb5-22"><a href="#cb5-22" tabindex="-1"></a><span class="st">        description: Sales region.</span></span>
+<span id="cb5-23"><a href="#cb5-23" tabindex="-1"></a><span class="st">        values: [EMEA, Americas, APAC]</span></span>
+<span id="cb5-24"><a href="#cb5-24" tabindex="-1"></a><span class="st">  - name: reps</span></span>
+<span id="cb5-25"><a href="#cb5-25" tabindex="-1"></a><span class="st">    description: One row per sales representative.</span></span>
+<span id="cb5-26"><a href="#cb5-26" tabindex="-1"></a><span class="st">relationships:</span></span>
+<span id="cb5-27"><a href="#cb5-27" tabindex="-1"></a><span class="st">  - join: orders.rep = reps.rep</span></span>
+<span id="cb5-28"><a href="#cb5-28" tabindex="-1"></a><span class="st">    cardinality: many-to-one</span></span>
+<span id="cb5-29"><a href="#cb5-29" tabindex="-1"></a><span class="st">    description: Each order is credited to exactly one rep.</span></span>
+<span id="cb5-30"><a href="#cb5-30" tabindex="-1"></a><span class="st">glossary:</span></span>
+<span id="cb5-31"><a href="#cb5-31" tabindex="-1"></a><span class="st">  net revenue: Gross revenue minus refunds.</span></span>
+<span id="cb5-32"><a href="#cb5-32" tabindex="-1"></a><span class="st">&#39;</span>,</span>
+<span id="cb5-33"><a href="#cb5-33" tabindex="-1"></a>  dictionary</span>
+<span id="cb5-34"><a href="#cb5-34" tabindex="-1"></a>)</span>
+<span id="cb5-35"><a href="#cb5-35" tabindex="-1"></a></span>
+<span id="cb5-36"><a href="#cb5-36" tabindex="-1"></a>sales <span class="ot">&lt;-</span> <span class="fu">data_source</span>(con, <span class="at">dictionary =</span> dictionary)</span></code></pre></div>
+<p>commons uses the dictionary in three places:</p>
+<ul>
+<li>The system prompt includes data source-wide prose and the
+glossary.</li>
+<li>The first tool result that touches a table includes its full
+entry.</li>
+<li><code>search_context</code> searches the dictionary’s prose.</li>
+</ul>
+</div>
+<div id="defining-measures" class="section level2">
+<h2>Defining measures</h2>
+<p>A measure is an ordinary R function documented with roxygen comments
+and marked with <code>@measure</code>. Documented arguments are supplied
+by the model; undocumented arguments are hidden from it.</p>
+<p><code>commons()</code> supplies arguments omitted from
+<code>arguments</code>, and the model does not see them. An argument
+named after a data source receives that source’s connection, so the
+measure need not depend on a variable defined elsewhere.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a>measure_file <span class="ot">&lt;-</span> <span class="fu">tempfile</span>(<span class="at">fileext =</span> <span class="st">&quot;.R&quot;</span>)</span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a><span class="fu">writeLines</span>(</span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a>  <span class="fu">c</span>(</span>
+<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a>    <span class="st">&quot;#&#39; Net Revenue by Region&quot;</span>,</span>
+<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a>    <span class="st">&quot;#&#39;&quot;</span>,</span>
+<span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a>    <span class="st">&quot;#&#39; @param region `enum[EMEA, Americas, APAC]` Sales region.&quot;</span>,</span>
+<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a>    <span class="st">&quot;#&#39; @measure&quot;</span>,</span>
+<span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a>    <span class="st">&quot;net_revenue_by_region &lt;- function(region, warehouse) {&quot;</span>,</span>
+<span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a>    <span class="st">&quot;  DBI::dbGetQuery(&quot;</span>,</span>
+<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a>    <span class="st">&quot;    warehouse,&quot;</span>,</span>
+<span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a>    <span class="st">&quot;    &#39;SELECT sum(revenue - refunded) AS net_revenue FROM orders WHERE region = ?&#39;,&quot;</span>,</span>
+<span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a>    <span class="st">&quot;    params = list(region)&quot;</span>,</span>
+<span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a>    <span class="st">&quot;  )&quot;</span>,</span>
+<span id="cb6-14"><a href="#cb6-14" tabindex="-1"></a>    <span class="st">&quot;}&quot;</span></span>
+<span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a>  ),</span>
+<span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a>  measure_file</span>
+<span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a>)</span>
+<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a></span>
+<span id="cb6-19"><a href="#cb6-19" tabindex="-1"></a>layer <span class="ot">&lt;-</span> <span class="fu">semantic_layer</span>(measure_file)</span>
+<span id="cb6-20"><a href="#cb6-20" tabindex="-1"></a><span class="fu">unlink</span>(measure_file)</span></code></pre></div>
+<p>The <code>region</code> enum limits the model to values present in
+the data. <code>warehouse</code> does not appear in the model’s
+schema.</p>
+<p><code>semantic_layer()</code> reads the documented measures from the
+file into a layer.</p>
+</div>
+<div id="building-the-agent" class="section level2">
+<h2>Building the agent</h2>
+<p><code>commons()</code> takes a chat client that supplies the provider
+and model. It returns an <code>ellmer::Chat</code> with commons’ system
+prompt and tools.</p>
+<p>The data source name <code>warehouse</code> connects it to the
+measure argument of the same name.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>agent <span class="ot">&lt;-</span> <span class="fu">commons</span>(</span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a>  ellmer<span class="sc">::</span><span class="fu">chat_anthropic</span>(),</span>
+<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a>  <span class="at">data_sources =</span> <span class="fu">list</span>(<span class="at">warehouse =</span> sales),</span>
+<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a>  <span class="at">semantic_layer =</span> layer</span>
+<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a>)</span>
+<span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a></span>
+<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a>agent<span class="sc">$</span><span class="fu">chat</span>(<span class="st">&quot;What was net revenue in EMEA?&quot;</span>)</span>
+<span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a><span class="co">#&gt; Net revenue in EMEA was $2,400.</span></span></code></pre></div>
+<p>The agent finds <code>net_revenue_by_region</code> with
+<code>search_measures(&quot;net revenue in EMEA&quot;)</code>, then calls it with
+<code>region = &quot;EMEA&quot;</code>. The measure supplies the definition of net
+revenue.</p>
+<p>Without a matching measure, the agent can run SQL against the
+connection:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a>agent<span class="sc">$</span><span class="fu">chat</span>(<span class="st">&quot;Which rep was hired most recently?&quot;</span>)</span>
+<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a><span class="co">#&gt; Cy, hired 2024-01-20.</span></span></code></pre></div>
+<p>Here the agent searches the data documentation, describes the
+<code>reps</code> table, and runs a SQL query.</p>
+</div>
+<div id="the-agents-tools" class="section level2">
+<h2>The agent’s tools</h2>
+<p>Every commons agent has five tools:</p>
+<table>
+<colgroup>
+<col width="50%" />
+<col width="50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th align="left">Tool</th>
+<th align="left">What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td align="left"><code>search_measures</code></td>
+<td align="left">Finds measures matching a question, with their argument
+schemas</td>
+</tr>
+<tr class="even">
+<td align="left"><code>call_measure</code></td>
+<td align="left">Runs a measure</td>
+</tr>
+<tr class="odd">
+<td align="left"><code>search_context</code></td>
+<td align="left">Searches your data documentation</td>
+</tr>
+<tr class="even">
+<td align="left"><code>describe_table</code></td>
+<td align="left">Returns a table’s columns, types, and sample rows</td>
+</tr>
+<tr class="odd">
+<td align="left"><code>run_sql</code></td>
+<td align="left">Runs a SQL query after checking its leading statement
+keyword</td>
+</tr>
+</tbody>
+</table>
+<p><code>run_sql</code> checks the query’s leading statement keyword
+against a denylist of common data- and schema-modifying operations
+before passing it to the database. The check is a keyword filter;
+database permissions remain the access-control boundary. Open a
+read-only connection where possible, with access limited to the tables
+the agent needs.</p>
+</div>
+<div id="deploying-in-shiny" class="section level2">
+<h2>Deploying in Shiny</h2>
+<p><code>commons()</code> returns an <code>ellmer::Chat</code>, so it
+works with <a href="https://posit-dev.github.io/shinychat/">shinychat</a>. Build a
+fresh agent for each session so users do not share a conversation.</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a><span class="fu">library</span>(shiny)</span>
+<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a><span class="fu">library</span>(shinychat)</span>
+<span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a></span>
+<span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a>ui <span class="ot">&lt;-</span> bslib<span class="sc">::</span><span class="fu">page_fillable</span>(<span class="fu">chat_mod_ui</span>(<span class="st">&quot;chat&quot;</span>))</span>
+<span id="cb9-5"><a href="#cb9-5" tabindex="-1"></a></span>
+<span id="cb9-6"><a href="#cb9-6" tabindex="-1"></a>server <span class="ot">&lt;-</span> <span class="cf">function</span>(input, output, session) {</span>
+<span id="cb9-7"><a href="#cb9-7" tabindex="-1"></a>  agent <span class="ot">&lt;-</span> <span class="fu">commons</span>(</span>
+<span id="cb9-8"><a href="#cb9-8" tabindex="-1"></a>    ellmer<span class="sc">::</span><span class="fu">chat_anthropic</span>(),</span>
+<span id="cb9-9"><a href="#cb9-9" tabindex="-1"></a>    <span class="at">data_sources =</span> <span class="fu">list</span>(<span class="at">warehouse =</span> sales),</span>
+<span id="cb9-10"><a href="#cb9-10" tabindex="-1"></a>    <span class="at">semantic_layer =</span> layer</span>
+<span id="cb9-11"><a href="#cb9-11" tabindex="-1"></a>  )</span>
+<span id="cb9-12"><a href="#cb9-12" tabindex="-1"></a>  <span class="fu">chat_mod_server</span>(<span class="st">&quot;chat&quot;</span>, <span class="at">client =</span> agent)</span>
+<span id="cb9-13"><a href="#cb9-13" tabindex="-1"></a>}</span>
+<span id="cb9-14"><a href="#cb9-14" tabindex="-1"></a></span>
+<span id="cb9-15"><a href="#cb9-15" tabindex="-1"></a><span class="fu">shinyApp</span>(ui, server)</span></code></pre></div>
+</div>
+<div id="customizing-the-system-prompt" class="section level2">
+<h2>Customizing the system prompt</h2>
+<p>The default prompt is a markdown file shipped with commons. To
+customize it, copy the file into your project and interpolate the edited
+version:</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="fu">file.copy</span>(</span>
+<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a>  <span class="fu">system.file</span>(<span class="st">&quot;prompts/system-prompt.md&quot;</span>, <span class="at">package =</span> <span class="st">&quot;commons&quot;</span>),</span>
+<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a>  <span class="st">&quot;system-prompt.md&quot;</span></span>
+<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a>)</span>
+<span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a></span>
+<span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a><span class="fu">commons</span>(</span>
+<span id="cb10-7"><a href="#cb10-7" tabindex="-1"></a>  ellmer<span class="sc">::</span><span class="fu">chat_anthropic</span>(),</span>
+<span id="cb10-8"><a href="#cb10-8" tabindex="-1"></a>  <span class="at">data_sources =</span> <span class="fu">list</span>(<span class="at">warehouse =</span> sales),</span>
+<span id="cb10-9"><a href="#cb10-9" tabindex="-1"></a>  <span class="at">semantic_layer =</span> layer,</span>
+<span id="cb10-10"><a href="#cb10-10" tabindex="-1"></a>  <span class="at">system_prompt =</span> ellmer<span class="sc">::</span><span class="fu">interpolate_file</span>(</span>
+<span id="cb10-11"><a href="#cb10-11" tabindex="-1"></a>    <span class="st">&quot;system-prompt.md&quot;</span>,</span>
+<span id="cb10-12"><a href="#cb10-12" tabindex="-1"></a>    <span class="at">date =</span> <span class="fu">Sys.Date</span>()</span>
+<span id="cb10-13"><a href="#cb10-13" tabindex="-1"></a>  )</span>
+<span id="cb10-14"><a href="#cb10-14" tabindex="-1"></a>)</span></code></pre></div>
+<p>commons appends the available tables and data dictionaries to the
+prompt. Omit them from the file.</p>
+</div>
+
+
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>
