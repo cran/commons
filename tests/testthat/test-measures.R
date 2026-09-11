@@ -1,215 +1,176 @@
-test_that("measure() builds a tool with a title and schema", {
-  m <- measure(
-    "revenue",
-    "Total revenue.",
-    function(region) region,
-    arguments = list(region = ellmer::type_string("Region."))
-  )
-
-  expect_equal(tool_name(m), "revenue")
-  expect_equal(tool_description(m), "Total revenue.")
-  expect_equal(tool_title(m), "revenue")
-  expect_named(tool_properties(m), "region")
-})
-
-test_that("measure() derives a title from the name and takes an override", {
-  fn <- function() 1
-
-  expect_equal(tool_title(measure("order_count", "d", fn)), "order count")
-  expect_equal(tool_title(measure("order_count", "d", fn, title = "Orders")), "Orders")
-})
-
-test_that("measure() validates its scalar arguments", {
-  fn <- function() 1
-
-  expect_snapshot(error = TRUE, measure(1, "d", fn))
-  expect_snapshot(error = TRUE, measure("m", 1, fn))
-  expect_snapshot(error = TRUE, measure("m", "d", fn, title = 1))
-})
-
-test_that("undocumented arguments are hidden from the model", {
-  m <- measure(
-    "revenue",
-    "Total revenue.",
-    function(region, warehouse) NULL,
-    arguments = list(region = ellmer::type_string("Region."))
-  )
-
-  expect_named(tool_properties(m), "region")
-  expect_equal(measure_injection_names(m), "warehouse")
-})
-
-test_that("semantic_layer() collects measures and splices lists", {
-  layer <- semantic_layer(
-    test_measure("a"),
-    list(test_measure("b"), test_measure("c"))
-  )
+test_that("semantic_layer stores measures by name", {
+  layer <- semantic_layer(count_measure_tool())
+  state <- semantic_layer_state(layer)
 
   expect_s3_class(layer, "commons_semantic_layer")
-  expect_named(layer$measures, c("a", "b", "c"))
+  expect_named(state$measures, "order_count")
+  expect_named(state$measure_display, "order_count")
+  expect_equal(
+    state$measure_display$order_count$description,
+    tool_description(state$measures$order_count)
+  )
 })
 
-test_that("semantic_layer() with no measures is empty", {
-  expect_length(semantic_layer()$measures, 0)
+test_that("semantic_layer accepts a list of measures", {
+  layer <- semantic_layer(list(count_measure_tool()))
+
+  expect_named(semantic_layer_state(layer)$measures, "order_count")
 })
 
-test_that("semantic_layer() rejects duplicates and non-measures", {
-  expect_snapshot(error = TRUE, semantic_layer(test_measure(), test_measure()))
-  expect_snapshot(error = TRUE, semantic_layer(function() 1))
+test_that("semantic_layer validates its measures", {
+  expect_snapshot(semantic_layer(2026), error = TRUE)
+  expect_snapshot(
+    semantic_layer(count_measure_tool(), count_measure_tool()),
+    error = TRUE
+  )
 })
 
-test_that("semantic_layer() reads measures from R scripts", {
+test_that("semantic_layer reads measures from path inputs", {
+  skip_if_not_installed("roxygen2")
+
+  path <- withr::local_tempfile(fileext = ".R")
+  writeLines(
+    c("#' Counter", "#' @description Counts.", "#' @measure", "counter <- function() 1L"),
+    path
+  )
+
+  layer <- semantic_layer(path, count_measure_tool())
+
+  expect_named(semantic_layer_state(layer)$measures, c("counter", "order_count"))
+})
+
+test_that("semantic_layer surfaces read_measures errors for bad paths", {
+  expect_snapshot(semantic_layer("not a measure"), error = TRUE)
+})
+
+test_that("semantic_layer collects sources from files and inline measures", {
+  skip_if_not_installed("roxygen2")
+
   path <- withr::local_tempfile(fileext = ".R")
   writeLines(
     c(
-      "#' Revenue by region",
-      "#' @param region `string` Sales region.",
+      "double <- function(x) x * 2L",
+      "#' Counter",
+      "#' @description Counts.",
       "#' @measure",
-      "revenue <- function(region, warehouse) NULL"
+      "counter <- function() double(1L)"
     ),
     path
   )
 
-  layer <- semantic_layer(path)
-  revenue <- layer$measures$revenue
+  layer <- semantic_layer(path, count_measure_tool())
 
-  expect_named(layer$measures, "revenue")
-  expect_named(tool_properties(revenue), "region")
-  expect_equal(measure_injection_names(revenue), "warehouse")
+  expect_setequal(names(semantic_layer_state(layer)$fn_sources), c("double", "counter", "order_count"))
+  expect_match(semantic_layer_state(layer)$fn_sources[["double"]], "x * 2L", fixed = TRUE)
+  expect_match(semantic_layer_state(layer)$fn_sources[["order_count"]], "^function")
 })
 
-test_that("resolve_injections() matches undocumented arguments to sources", {
-  registry <- semantic_layer(
-    measure(
-      "revenue",
-      "Total revenue.",
-      function(region, warehouse) NULL,
-      arguments = list(region = ellmer::type_string("Region."))
-    )
-  )$measures
-
-  injections <- resolve_injections(registry, list(warehouse = "CON"))
-
-  expect_equal(injections$revenue, list(warehouse = "CON"))
-})
-
-test_that("resolve_injections() leaves defaulted arguments alone", {
-  registry <- semantic_layer(
-    measure("m", "d", function(board = "default") board)
-  )$measures
-
-  expect_equal(resolve_injections(registry, list()), list(m = list()))
-})
-
-test_that("resolve_injections() errors on an unmatched argument with no default", {
-  registry <- semantic_layer(
-    measure("revenue", "d", function(warehouse) NULL)
-  )$measures
-
-  expect_snapshot(error = TRUE, resolve_injections(registry, list()))
-  expect_snapshot(error = TRUE, resolve_injections(registry, list(finance = 1)))
-})
-
-test_that("validate_measure_args() coerces to the declared types", {
-  m <- measure(
-    "m",
-    "d",
-    function(count, ratio, flag, region) NULL,
-    arguments = list(
-      count = ellmer::type_integer("n"),
-      ratio = ellmer::type_number("r"),
-      flag = ellmer::type_boolean("f"),
-      region = ellmer::type_string("s")
-    )
-  )
-
+test_that("validate_measure_args coerces valid arguments", {
+  td <- count_measure_tool()
   args <- validate_measure_args(
-    m,
-    list(count = "3", ratio = "1.5", flag = "TRUE", region = "EMEA")
+    td,
+    list(region = c("EMEA"), revenue_under = "1000")
   )
 
-  expect_identical(args, list(count = 3L, ratio = 1.5, flag = TRUE, region = "EMEA"))
+  expect_equal(args$region, "EMEA")
+  expect_identical(args$revenue_under, 1000)
 })
 
-test_that("validate_measure_args() enforces enums and arrays", {
-  m <- measure(
-    "m",
-    "d",
-    function(region, regions) NULL,
-    arguments = list(
-      region = ellmer::type_enum(values = c("EMEA", "APAC"), description = "r"),
-      regions = ellmer::type_array(
-        items = ellmer::type_enum(values = c("EMEA", "APAC")),
-        description = "rs"
-      )
-    )
-  )
-
-  expect_equal(
-    validate_measure_args(m, list(region = "EMEA", regions = c("EMEA", "APAC"))),
-    list(region = "EMEA", regions = c("EMEA", "APAC"))
-  )
+test_that("validate_measure_args rejects out-of-vocabulary enum values", {
   expect_snapshot(
-    error = TRUE,
-    validate_measure_args(m, list(region = "LATAM", regions = "EMEA"))
+    validate_measure_args(count_measure_tool(), list(region = "LATAM")),
+    error = TRUE
   )
 })
 
-test_that("validate_measure_args() reports missing and unknown arguments", {
-  m <- measure(
-    "m",
-    "d",
-    function(region) NULL,
-    arguments = list(region = ellmer::type_string("r"))
+test_that("validate_measure_args rejects unknown arguments", {
+  expect_snapshot(
+    validate_measure_args(count_measure_tool(), list(nope = 1)),
+    error = TRUE
   )
-
-  expect_snapshot(error = TRUE, validate_measure_args(m, list()))
-  expect_snapshot(error = TRUE, validate_measure_args(m, list(region = "EMEA", rep = "Ada")))
 })
 
-test_that("optional arguments may be omitted", {
-  m <- measure(
-    "m",
-    "d",
-    function(region = "EMEA") NULL,
-    arguments = list(region = ellmer::type_string("r", required = FALSE))
+test_that("validate_measure_args enforces required arguments", {
+  td <- ellmer::tool(
+    function(x) x,
+    "needs x",
+    arguments = list(x = ellmer::type_string()),
+    name = "needs_x"
   )
-
-  expect_equal(validate_measure_args(m, list()), list())
+  expect_snapshot(validate_measure_args(td, list()), error = TRUE)
 })
 
-test_that("search_measures_text() renders matching schemas", {
-  registry <- semantic_layer(
-    measure(
-      "revenue_by_region",
-      "Total revenue for a sales region.",
-      function(region, warehouse) NULL,
-      arguments = list(region = ellmer::type_string("Sales region."))
-    ),
-    test_measure("headcount")
-  )$measures
+test_that("search_pool_text surfaces matches with their schema", {
+  registry <- list(order_count = count_measure_tool())
+  out <- search_pool_text(registry, empty_definitions(), "how many orders")
 
-  expect_snapshot(cat(search_measures_text(registry, "revenue by region")))
+  expect_match(out, "order_count")
+  expect_match(out, "revenue_under")
+  expect_match(out, "EMEA")
 })
 
-test_that("search_measures_text() names the sources a measure uses", {
-  registry <- semantic_layer(
-    measure(
-      "revenue",
-      "Total revenue.",
-      function(warehouse) NULL
+test_that("search_pool_text omits arguments for measures without them", {
+  registry <- list(
+    biodiversity_by_site = measure(
+      "biodiversity_by_site",
+      "Species richness for every site.",
+      function() NULL
     )
-  )$measures
+  )
 
+  out <- search_pool_text(registry, empty_definitions(), "biodiversity by site")
+
+  expect_no_match(out, "arguments:", fixed = TRUE)
+  expect_no_match(out, "no arguments", fixed = TRUE)
+})
+
+test_that("search_pool_text notes measure sources when given source names", {
+  registry <- list(
+    region_revenue = measure(
+      "region_revenue",
+      "Total revenue for a region.",
+      function(region, warehouse, cache) NULL,
+      arguments = list(region = ellmer::type_string("The sales region."))
+    )
+  )
+
+  out <- search_pool_text(
+    registry,
+    empty_definitions(),
+    "revenue for a region",
+    source_names = c("warehouse", "finance")
+  )
+  expect_match(out, "sources: warehouse", fixed = TRUE)
+  expect_no_match(out, "finance")
+  expect_no_match(out, "cache")
+
+  expect_no_match(
+    search_pool_text(registry, empty_definitions(), "revenue for a region"),
+    "sources:"
+  )
+})
+
+test_that("search_pool_text reports when nothing matches", {
+  registry <- list(order_count = count_measure_tool())
   expect_match(
-    search_measures_text(registry, "revenue", source_names = "warehouse"),
-    "sources: warehouse"
+    search_pool_text(registry, empty_definitions(), "weather forecast"),
+    "Nothing in the semantic layer"
   )
 })
 
-test_that("search_measures_text() handles empty registries and misses", {
-  expect_equal(search_measures_text(list(), "revenue"), "No measures are registered.")
-  expect_snapshot(
-    cat(search_measures_text(semantic_layer(test_measure())$measures, "headcount"))
-  )
+test_that("measure_schema_text matches the shared fixture", {
+  cases <- shared_fixture("measure-schema")$measure_schema_text$cases
+  expect_gt(length(cases), 0)
+
+  for (case in cases) {
+    args <- list(
+      fixture_measure(case$measure),
+      source_names = unlist(case$source_names) %||% character()
+    )
+    if (!is.null(case$heading)) {
+      args$heading <- case$heading
+    }
+    rendered <- do.call(measure_schema_text, args)
+    expect_identical(rendered, case$expected, info = case$name)
+  }
 })

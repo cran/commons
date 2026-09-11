@@ -5,24 +5,88 @@ read_measures <- function(paths, env = globalenv()) {
     function(x) roxygen2::tag_toggle(x),
     envir = asNamespace("roxygen2")
   )
+  registerS3method(
+    "roxy_tag_parse",
+    "roxy_tag_provenance",
+    function(x) roxygen2::tag_value(x),
+    envir = asNamespace("roxygen2")
+  )
 
-  files <- resolve_measure_files(paths)
-  measure_env <- new.env(parent = env)
-  for (file in files) {
-    sys.source(file, envir = measure_env)
+  if (!is.character(paths)) {
+    cli::cli_abort("{.arg paths} must be a character vector of file or directory paths.")
   }
 
-  unlist(
+  files <- resolve_measure_files(paths)
+
+  # Source every file into one shared env (in order) so a measure can call a
+  # helper defined in a sibling file. The parsed block only reads tags. The env
+  # inherits from `env` (the semantic_layer() caller) so measures can reference
+  # data defined there, not only in the global environment. keep.source
+  # preserves srcrefs so measure sources ship to the run_r session verbatim,
+  # comments included.
+  measure_env <- new.env(parent = env)
+  for (file in files) {
+    sys.source(file, envir = measure_env, keep.source = TRUE)
+  }
+
+  records <- unlist(
     lapply(files, function(file) read_measures_file(file, measure_env)),
     recursive = FALSE
-  ) %||% list()
+  )
+  records <- records %||% list()
+  new_measure_files(
+    measures = lapply(records, `[[`, "measure"),
+    fn_sources = env_fn_sources(measure_env),
+    provenance = lapply(records, `[[`, "provenance"),
+    measure_display = lapply(records, `[[`, "measure_display")
+  )
+}
+
+new_measure_files <- function(
+  measures = list(),
+  fn_sources = character(),
+  provenance = rep(list(character()), length(measures)),
+  measure_display = NULL
+) {
+  measure_display <- measure_display %||% rep(list(NULL), length(measures))
+  structure(
+    list(
+      measures = measures,
+      fn_sources = fn_sources,
+      provenance = provenance,
+      measure_display = measure_display
+    ),
+    class = "commons_measure_files"
+  )
+}
+
+# Source text for every function defined by the semantic layer files —
+# measures and the helpers they call alike — so run_r can present them for
+# reading. Only text leaves the environment; closures never do.
+env_fn_sources <- function(env) {
+  out <- character()
+  for (nm in ls(env)) {
+    obj <- env[[nm]]
+    if (is.function(obj)) {
+      out[[nm]] <- fn_source_text(obj)
+    }
+  }
+  out
+}
+
+fn_source_text <- function(fn) {
+  src <- attr(fn, "srcref")
+  if (is.null(src)) {
+    return(paste(deparse(fn), collapse = "\n"))
+  }
+  paste(as.character(src), collapse = "\n")
 }
 
 resolve_measure_files <- function(paths, call = rlang::caller_env()) {
   missing <- paths[!file.exists(paths)]
   if (length(missing)) {
     cli::cli_abort(
-      "{cli::qty(missing)}Path{?does/do} not exist: {.path {missing}}.",
+      "{cli::qty(missing)}Path{?s} {?does/do} not exist: {.path {missing}}.",
       call = call
     )
   }
@@ -54,11 +118,20 @@ block_to_measure <- function(block, env) {
     return(NULL)
   }
 
-  measure(
-    name,
-    block_description(block),
-    fn,
-    arguments = block_arguments(block, fn)
+  description <- block_description(block)
+  arguments <- block_arguments(block, fn)
+  display <- block_display_metadata(block)
+
+  list(
+    measure = measure(
+      name,
+      description,
+      fn,
+      arguments = arguments,
+      title = display$title
+    ),
+    provenance = block_provenance(block),
+    measure_display = display[c("description", "details")]
   )
 }
 
@@ -67,56 +140,79 @@ block_description <- function(block) {
     roxygen2::block_get_tag_value(block, "title"),
     roxygen2::block_get_tag_value(block, "description"),
     {
-      value <- roxygen2::block_get_tag_value(block, "return")
-      if (!is.null(value)) paste0("Returns: ", value)
+      ret <- roxygen2::block_get_tag_value(block, "return")
+      if (!is.null(ret)) paste0("Returns: ", ret)
     }
   )
   paste(parts, collapse = "\n\n")
 }
 
+block_display_metadata <- function(block) {
+  ret <- roxygen2::block_get_tag_value(block, "return")
+  list(
+    title = roxygen2::block_get_tag_value(block, "title"),
+    description = roxygen2::block_get_tag_value(block, "description") %||% "",
+    details = if (!is.null(ret)) paste0("Returns: ", ret)
+  )
+}
+
+block_provenance <- function(block) {
+  tags <- roxygen2::block_get_tags(block, "provenance")
+  vapply(tags, function(tag) tag$val, character(1))
+}
+
 block_arguments <- function(block, fn) {
+  formals <- formals(fn)
   param_text <- block_param_text(block)
+
   args <- list()
-  for (name in names(formals(fn))) {
-    if (is.null(param_text[[name]])) {
+  for (nm in names(formals)) {
+    # An argument without @param is supplied by commons(), not the model.
+    if (is.null(param_text[[nm]])) {
       next
     }
-    required <- identical(formals(fn)[[name]], quote(expr = ))
-    default <- if (required) NULL else formals(fn)[[name]]
-    args[[name]] <- param_type(
-      param_text[[name]],
-      default = default,
+    required <- identical(formals[[nm]], quote(expr = ))
+    args[[nm]] <- param_type(
+      param_text[[nm]],
+      default = formals[[nm]],
       required = required
     )
   }
   args
 }
 
+# The raw tag text is read instead of `val$description` so the type code span
+# survives verbatim: the markdown roclet would otherwise turn the `[...]` inside
+# it into a `\link{...}` once roxygen2's markdown state is active.
 block_param_text <- function(block) {
   tags <- roxygen2::block_get_tags(block, "param")
-  names <- vapply(tags, function(tag) tag$val$name, character(1))
-  text <- lapply(tags, function(tag) trimws(sub("^\\s*\\S+\\s*", "", tag$raw)))
+  names <- vapply(tags, function(t) t$val$name, character(1))
+  text <- lapply(tags, function(t) trimws(sub("^\\s*\\S+\\s*", "", t$raw)))
   names(text) <- names
   text
 }
 
+# Parse a `@param` description into an ellmer type, using a leading type code
+# span (e.g. `enum[a, b]`) when present and otherwise inferring from the
+# formal's default.
 param_type <- function(text, default, required) {
-  pattern <- "^\\s*`([a-zA-Z]+)(\\[[^]]*\\])?`\\s*(.*)$"
-  match <- regmatches(text, regexec(pattern, text, perl = TRUE))[[1]]
+  re <- "(?s)^\\s*`([a-zA-Z]+)(\\[[^]]*\\])?`\\s*(.*)$"
+  m <- regmatches(text, regexec(re, text, perl = TRUE))[[1]]
 
-  if (length(match) == 0) {
+  if (length(m) == 0) {
     return(infer_type(default, description = trimws(text), required = required))
   }
 
-  kind <- tolower(match[2])
-  bracket <- match[3]
-  description <- trimws(match[4])
+  kind <- tolower(m[2])
+  bracket <- m[3]
+  description <- trimws(m[4])
 
   if (nzchar(bracket)) {
     inner <- trimws(substr(bracket, 2, nchar(bracket) - 1))
     if (kind == "enum") {
+      values <- trimws(strsplit(inner, ",")[[1]])
       return(ellmer::type_enum(
-        values = trimws(strsplit(inner, ",")[[1]]),
+        values = values,
         description = description,
         required = required
       ))

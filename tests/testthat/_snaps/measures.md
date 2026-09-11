@@ -1,102 +1,50 @@
-# measure() validates its scalar arguments
+# semantic_layer validates its measures
 
     Code
-      measure(1, "d", fn)
+      semantic_layer(2026)
     Condition
-      Error in `measure()`:
-      ! `name` must be a single string, not the number 1.
+      Error in `semantic_layer()`:
+      ! Every item in `semantic_layer` must be created by `measure()`.
 
 ---
 
     Code
-      measure("m", 1, fn)
-    Condition
-      Error in `measure()`:
-      ! `description` must be a single string, not the number 1.
-
----
-
-    Code
-      measure("m", "d", fn, title = 1)
-    Condition
-      Error in `measure()`:
-      ! `title` must be a single string or `NULL`, not the number 1.
-
-# semantic_layer() rejects duplicates and non-measures
-
-    Code
-      semantic_layer(test_measure(), test_measure())
+      semantic_layer(count_measure_tool(), count_measure_tool())
     Condition
       Error in `semantic_layer()`:
       ! Measure names must be unique; duplicated name: "order_count".
 
----
+# semantic_layer surfaces read_measures errors for bad paths
 
     Code
-      semantic_layer(function() 1)
+      semantic_layer("not a measure")
     Condition
-      Error in `semantic_layer()`:
-      ! Every item in `semantic_layer` must be an <ellmer::ToolDef>.
+      Error in `read_measures()`:
+      ! Path does not exist: 'not a measure'.
 
-# resolve_injections() errors on an unmatched argument with no default
-
-    Code
-      resolve_injections(registry, list())
-    Condition
-      Error:
-      ! Measure "revenue" has undocumented argument `warehouse` matching no data source.
-      i `data_sources` has no named sources.
-
----
+# validate_measure_args rejects out-of-vocabulary enum values
 
     Code
-      resolve_injections(registry, list(finance = 1))
+      validate_measure_args(count_measure_tool(), list(region = "LATAM"))
     Condition
       Error:
-      ! Measure "revenue" has undocumented argument `warehouse` matching no data source.
-      i Available sources: "finance".
+      ! Invalid value for `region` of measure "order_count": "LATAM".
+      i Allowed: "Americas", "APAC", and "EMEA".
 
-# validate_measure_args() enforces enums and arrays
+# validate_measure_args rejects unknown arguments
 
     Code
-      validate_measure_args(m, list(region = "LATAM", regions = "EMEA"))
+      validate_measure_args(count_measure_tool(), list(nope = 1))
     Condition
       Error:
-      ! Invalid value for `region` of measure "m": "LATAM".
-      i Allowed: "EMEA" and "APAC".
+      ! Unknown argument for measure "order_count": "nope".
+      i Valid arguments: "region" and "revenue_under".
 
-# validate_measure_args() reports missing and unknown arguments
+# validate_measure_args enforces required arguments
 
     Code
-      validate_measure_args(m, list())
+      validate_measure_args(td, list())
     Condition
       Error:
-      ! Measure "m" requires argument `region`.
-
----
-
-    Code
-      validate_measure_args(m, list(region = "EMEA", rep = "Ada"))
-    Condition
-      Error:
-      ! Unknown argument for measure "m": "rep".
-      i Valid arguments: "region".
-
-# search_measures_text() renders matching schemas
-
-    Code
-      cat(search_measures_text(registry, "revenue by region"))
-    Output
-      ### revenue_by_region
-      Total revenue for a sales region.
-      
-      arguments:
-        - region (string, required) Sales region.
-
-# search_measures_text() handles empty registries and misses
-
-    Code
-      cat(search_measures_text(semantic_layer(test_measure())$measures, "headcount"))
-    Output
-      No measure matches "headcount". Consider writing a SQL query.
+      ! Measure "needs_x" requires argument `x`.
 

@@ -13,7 +13,7 @@ lexical_rank <- function(query, documents, n = 5) {
     integer(1)
   )
 
-  hits <- unname(which(scores > 0))
+  hits <- which(scores > 0)
   hits[order(scores[hits], decreasing = TRUE)][seq_len(min(n, length(hits)))]
 }
 
@@ -29,9 +29,19 @@ df_to_markdown <- function(df, max_rows = 50) {
   shown <- utils::head(df, max_rows)
   out <- knitr::kable(shown, format = "pipe")
   if (n > max_rows) {
-    out <- c(out, "", sprintf("*%d more rows not shown.*", n - max_rows))
+    out <- c(out, "", sprintf("%d more rows not shown", n - max_rows))
   }
   paste(out, collapse = "\n")
+}
+
+df_to_html <- function(df, max_rows = 50) {
+  n <- nrow(df)
+  shown <- utils::head(df, max_rows)
+  out <- paste(knitr::kable(shown, format = "html"), collapse = "")
+  if (n > max_rows) {
+    out <- paste0(out, sprintf("<p>%d more rows not shown</p>", n - max_rows))
+  }
+  out
 }
 
 # Collapse a multi-line prose field onto one line, e.g. for a bullet item.
@@ -48,20 +58,44 @@ word_pattern <- function(x) {
   paste0("\\b", escape_regex(x), "\\b")
 }
 
-html_escape <- function(x) {
-  x <- gsub("&", "&amp;", x, fixed = TRUE)
-  x <- gsub("<", "&lt;", x, fixed = TRUE)
-  x <- gsub(">", "&gt;", x, fixed = TRUE)
-  x <- gsub("\"", "&quot;", x, fixed = TRUE)
-  x <- gsub("'", "&#39;", x, fixed = TRUE)
-  x
-}
-
 # Icons are decorative, so bsicons is optional.
 maybe_icon <- function(name) {
-  if (rlang::is_installed("bsicons")) {
+  if (is_installed("bsicons")) {
     bsicons::bs_icon(name)
   } else {
     NULL
   }
+}
+
+# Run `expr` when `envir` exits, like withr::defer(). Works inside coro
+# generator frames, which persist across yields and exit on completion.
+defer <- function(expr, envir = parent.frame()) {
+  thunk <- as.call(list(function() expr))
+  do.call(on.exit, list(thunk, add = TRUE), envir = envir)
+}
+
+drop_nulls <- function(x) {
+  x[!vapply(x, is.null, logical(1))]
+}
+
+collect_appended_tags <- function(turns, from_index) {
+  if (from_index > length(turns)) {
+    return(character())
+  }
+  appended <- turns[from_index:length(turns)]
+  tags <- unlist(
+    lapply(appended, function(turn) {
+      lapply(turn@contents, function(content) {
+        if (S7::S7_inherits(content, ellmer::ContentToolResult)) {
+          content@extra$commons_tag
+        }
+      })
+    }),
+    use.names = FALSE
+  )
+  tags %||% character()
+}
+
+is_tool_result_content <- function(content) {
+  S7::S7_inherits(content, ellmer::ContentToolResult)
 }

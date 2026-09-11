@@ -1,44 +1,35 @@
-# data_dictionary() errors informatively on a bad path
+# tables and columns without names error
 
     Code
-      data_dictionary("no-such-file.yaml")
-    Condition
-      Error:
-      ! `dictionary` does not exist: 'no-such-file.yaml'.
-
-# as_data_dictionary() passes through and rejects other input
-
-    Code
-      as_data_dictionary(list(name = "x"))
-    Condition
-      Error:
-      ! `dictionary` must be a path to a data-dict.yaml file.
-
-# key_by_name() requires a name on each entry
-
-    Code
-      key_by_name(list(list(description = "A")), "table")
+      new_data_dictionary(list(tables = list(list(description = "no name"))))
     Condition
       Error:
       ! Each table in a data dictionary needs a name.
 
-# dictionary_entry_text() renders prose, columns, and joins
+---
 
     Code
-      cat(dictionary_entry_text(d, "sales"))
-    Output
-      Dictionary entry for `sales`:
-      
-      Closed orders, one row each.
-      
-      Excludes orders still in flight.
-      
-      Documented columns:
-      
-      - revenue (number, USD): Net revenue for the order.
-      - region: Sales region. Values: EMEA, Americas, APAC.
-      
-      Relationships:
-      
-      - sales.rep = reps.rep (many-to-one): Each order is credited to one rep.
+      new_data_dictionary(list(tables = list(list(name = "sales", columns = list(list(
+        type = "date"))))))
+    Condition
+      Error:
+      ! Each column in a data dictionary needs a name.
+
+# data_source() rejects other dictionary inputs
+
+    Code
+      data_source(sales = test_sales(), dictionary = 42)
+    Condition
+      Error in `data_source()`:
+      ! `dictionary` must be a path to a data-dict.yaml file.
+
+# relative authored table names must be unambiguous
+
+    Code
+      catalog_merge_dictionary(dictionary, relations, NULL, function(...) NULL,
+      "upper")
+    Condition
+      Error:
+      ! Authored table "orders" matches more than one selected relation: "ANALYTICS.PUBLIC.ORDERS" and "ANALYTICS.STAGING.ORDERS".
+      i Use its fully qualified name in the data dictionary.
 

@@ -1,128 +1,113 @@
-# data_source() errors on tables the connection doesn't have
+# source_describe errors informatively for unknown tables
 
     Code
-      data_source(con, tables = c("sales", "nope"))
+      source_describe(test_source(), "nope")
+    Condition
+      Error in `source_describe()`:
+      ! No table named "nope".
+      i Available tables: "sales".
+
+# data_source errors for tables absent from the connection
+
+    Code
+      data_source(con, tables = "nope")
     Condition
       Error in `data_source()`:
       ! `tables` names table not on the connection: "nope".
 
-# data_source() rejects anything but a single connection
+# data_source rejects a board label colliding with a built-in relation
 
     Code
-      data_source()
+      data_source(board, tables = c(duckdb_tables = "team-orders"))
     Condition
       Error in `data_source()`:
-      ! `data_source()` needs a database connection.
+      ! `tables` label collides with built-in database relation: "duckdb_tables".
+      i Rename the affected table.
 
----
+# data_source validates board pin names at construction
 
     Code
-      data_source(sales = test_sales())
+      data_source(board, tables = c(orders = "team-orders", missing = "nope"))
     Condition
       Error in `data_source()`:
-      ! `data_source()` needs a <DBIConnection>, not a data frame.
+      ! `tables` names pin not on the board: "nope".
 
 ---
 
     Code
-      data_source(con, con)
+      data_source(board)
     Condition
       Error in `data_source()`:
-      ! `data_source()` takes a single database connection.
+      ! `tables` must be a named character vector of pin names.
 
-# data_source() rejects a dictionary that isn't a path
+---
 
     Code
-      data_source(con, dictionary = list())
+      data_source(board, tables = stats::setNames(character(0), character(0)))
     Condition
       Error in `data_source()`:
-      ! `dictionary` must be a path to a data-dict.yaml file.
+      ! `tables` must name at least one pin.
 
-# list_tables() requires a data source
-
-    Code
-      list_tables("sales")
-    Condition
-      Error in `list_tables()`:
-      ! `data_source` must be a `data_source()`.
-
-# normalize_table_registry() rejects malformed entries
+# check_board_pins_exist resolves, flags missing, and flags ambiguous names
 
     Code
-      normalize_table_registry(c("sales", "sales"))
+      check_board_pins_exist(board, c(x = "nope"))
     Condition
       Error:
-      ! `tables` must not contain duplicate labels: "sales".
+      ! `tables` names pin not on the board: "nope".
 
 ---
 
     Code
-      normalize_table_registry(".sales")
+      check_board_pins_exist(board, c(o = "orders"))
     Condition
       Error:
-      ! Schema-qualified entries in `tables` must not contain empty name components.
+      ! `tables` names pin matching more than one pin on the board: "orders".
+      i Use the full "owner/name" form to disambiguate.
+
+# check_board_pins_exist accepts a pin absent from a capped listing
+
+    Code
+      check_board_pins_exist(board, c(x = "nope"))
+    Condition
+      Error:
+      ! `tables` names pin not on the board: "nope".
+
+# a pin that isn't a data frame errors clearly
+
+    Code
+      source_describe(src, "cfg")
+    Condition
+      Error in `source_describe()`:
+      ! Pin "config" for table "cfg" is not a data frame.
+      i It is a list.
+
+# data_source rejects unnamed or non-data-frame input
+
+    Code
+      data_source(data.frame(x = 1))
+    Condition
+      Error in `data_source()`:
+      ! All arguments to `data_source()` must be named.
 
 ---
 
     Code
-      normalize_table_registry(1)
+      data_source(a = 1)
+    Condition
+      Error in `data_source()`:
+      ! Every argument must be a data frame; `a` is not.
+
+# resolve_sql_source picks the source for a SQL tool call
+
+    Code
+      resolve_sql_source(sources, "nope")
     Condition
       Error:
-      ! `tables` must be a character vector, a list, or a <DBI::Id>.
+      ! No data source named "nope".
+      i Available sources: "a" and "b".
 
 ---
-
-    Code
-      normalize_table_registry(list(NA_character_))
-    Condition
-      Error:
-      ! Each entry in `tables` must be a table name or a <DBI::Id>.
-
----
-
-    Code
-      normalize_table_registry(DBI::Id(schema = "public"))
-    Condition
-      Error:
-      ! <DBI::Id> entries in `tables` must include a `table` component.
-
-# source_describe() errors on an unregistered table
-
-    Code
-      source_describe(src, "reps")
-    Condition
-      Error:
-      ! No table named "reps".
-      i Available tables: "sales".
-
-# check_query() rejects statements that would write
-
-    Code
-      check_query("DROP TABLE sales")
-    Condition
-      Error:
-      ! The query contains a disallowed operation: `DROP`.
-      i Only read-only SELECT queries are allowed.
-
----
-
-    Code
-      check_query("  insert into sales values (1)")
-    Condition
-      Error:
-      ! The query contains a disallowed operation: `INSERT`.
-      i Only read-only SELECT queries are allowed.
-
----
-
-    Code
-      check_query("update\n sales set revenue = 0")
-    Condition
-      Error:
-      ! The query contains a disallowed operation: `UPDATE`.
-      i Only read-only SELECT queries are allowed.
-
-# resolve_sql_source() requires a valid name with several sources
 
     Code
       resolve_sql_source(sources, NULL)
@@ -131,19 +116,10 @@
       ! `source` is required when an agent has multiple data sources.
       i Available sources: "a" and "b".
 
----
+# as_data_sources validates its input
 
     Code
-      resolve_sql_source(sources, "c")
-    Condition
-      Error:
-      ! No data source named "c".
-      i Available sources: "a" and "b".
-
-# as_data_sources() wraps a bare source and validates lists
-
-    Code
-      as_data_sources("sales")
+      as_data_sources("nope")
     Condition
       Error:
       ! `data_sources` must be a `data_source()` or a named list of them.
@@ -159,7 +135,23 @@
 ---
 
     Code
-      as_data_sources(list(src, src))
+      as_data_sources(list(sales_db = "not a source"))
+    Condition
+      Error:
+      ! `data_sources` must be a `data_source()` or a named list of them.
+
+---
+
+    Code
+      as_data_sources(list(sales_db = test_source(), board = list()))
+    Condition
+      Error:
+      ! `data_sources` must be a `data_source()` or a named list of them.
+
+---
+
+    Code
+      as_data_sources(list(test_source(), test_source()))
     Condition
       Error:
       ! Each entry in `data_sources` must be named.
@@ -167,7 +159,7 @@
 ---
 
     Code
-      as_data_sources(list(a = src, a = src))
+      as_data_sources(list(a = test_source(), a = test_source()))
     Condition
       Error:
       ! `data_sources` names must be unique; duplicated name: "a".

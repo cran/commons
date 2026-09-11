@@ -7,57 +7,87 @@
 semantic_layer(...)
 }
 \arguments{
-\item{...}{Paths to R scripts or directories containing functions marked
-with \verb{@measure}.}
+\item{...}{\code{\link[=measure]{measure()}} objects, lists of measures, or paths to R scripts or
+directories containing R scripts. Directory searches are not recursive.
+File and inline measures can be freely mixed.}
 }
 \value{
-A \code{commons_semantic_layer} object.
+A \code{commons_semantic_layer} R6 object. Its internals are private and
+may change without notice.
 }
 \description{
-A semantic layer collects governed measures for a \code{\link[=commons]{commons()}} agent. The
-agent searches these measures before writing SQL. When a measure matches,
-the agent runs the calculation defined by your data team.
+\code{semantic_layer()} collects trusted calculations for a \code{\link[=commons]{commons()}} agent.
+Data dictionary definitions and warehouse semantic models contribute through
+\code{\link[=data_source]{data_source()}}.
 }
-\details{
-A measure is an ordinary R function documented with roxygen comments and
-marked with \verb{@measure}. It can take model-supplied and injected arguments:
+\section{Measures from files}{
+
+Character paths can name R scripts or directories containing them. Functions
+marked with \verb{@measure} become measures; other functions in those files can be
+used as helpers.
+
+The roxygen title, description, and \verb{@return} text describe the measure.
+Each \verb{@param} marks a model-supplied argument and can declare its type:
+\code{string}, \code{integer}, \code{number}, \code{boolean}, \code{enum[value, ...]}, or an array
+such as \code{string[]}. Without a declaration, commons infers the type from the
+default, falling back to \code{string}.
+
+Measure and helper source is visible in the agent's R session; evaluating a
+measure's name there prints its definition. Function environments,
+connections, and credentials are not shared with that session.
+}
+
+\section{Measure arguments}{
+
+A measure function can take two kinds of arguments:
 \itemize{
-\item Arguments documented with \verb{@param} are supplied by the model.
-\item Undocumented arguments are hidden from the model. \code{\link[=commons]{commons()}} supplies a
-matching data source's connection or keeps the argument's default. It
-errors if neither is available.
+\item Arguments documented with \verb{@param} (or listed in \code{arguments}, for inline
+\code{\link[=measure]{measure()}}s) are supplied by the model.
+\item Undocumented arguments are supplied by \code{\link[=commons]{commons()}} when the measure runs.
+An argument named after a data source receives its connection, even if
+the argument has a default. Any other undocumented argument keeps its
+default; if it has no default, \code{\link[=commons]{commons()}} errors. The model never sees
+these arguments.
 }
 
-Because the measure receives its connection as an argument, the semantic
-layer can be defined before the connection is opened.
+This means a measure can take the connection it needs as an argument
+rather than relying on a variable defined elsewhere, and you can create a
+semantic layer before connecting to a database.
 
-For another dependency, such as an API client, use a default expression
-that constructs it. Referring to a variable instead would make the measure
-depend on the environment where the semantic layer was created.
+For objects that aren't data sources, such as a pins board or an API
+client, give the argument a default that builds the object, e.g.
+\code{board = pins::board_connect()}. Write the default as a call rather than a
+reference to a variable defined elsewhere, so the measure doesn't depend on
+where the semantic layer is created.
 }
+
 \examples{
-measure_file <- tempfile(fileext = ".R")
-writeLines(
-  c(
-    "#' Revenue by region",
-    "#'",
-    "#' @param region `string` Sales region.",
-    "#' @measure",
-    "revenue_by_region <- function(region, warehouse) {",
-    "  DBI::dbGetQuery(",
-    "    warehouse,",
-    "    'SELECT sum(revenue) AS revenue FROM sales WHERE region = ?',",
-    "    params = list(region)",
-    "  )",
-    "}"
-  ),
-  measure_file
+semantic_layer(
+  measure(
+    "order_count",
+    "Count of orders.",
+    function() 10,
+    arguments = list()
+  )
 )
 
-layer <- semantic_layer(measure_file)
-unlink(measure_file)
+\dontrun{
+# In R/semantic_layer.R, `warehouse` has no @param, so commons supplies it:
+#
+# #' @param region `string` The sales region.
+# #' @measure
+# revenue <- function(region, warehouse) {
+#   DBI::dbGetQuery(warehouse, ...)
+# }
+
+agent <- commons(
+  ellmer::chat_anthropic(),
+  data_sources = list(warehouse = data_source(DBI::dbConnect(...))),
+  semantic_layer = semantic_layer("R/semantic_layer.R")
+)
+}
 
 }
 \seealso{
-\code{\link[=commons]{commons()}} to give a semantic layer to an agent.
+\code{\link[=measure]{measure()}} to define a measure.
 }

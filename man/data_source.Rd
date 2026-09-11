@@ -4,18 +4,39 @@
 \alias{data_source}
 \title{Create a data source}
 \usage{
-data_source(..., tables = NULL, dictionary = NULL)
+data_source(..., tables = NULL, exclude = NULL, dictionary = NULL)
 }
 \arguments{
-\item{...}{A single \pkg{DBI} connection.}
+\item{...}{A single DBI connection, a single \code{pins} board, or named data
+frames to register as tables. When passing data frames, each name becomes
+a table name the agent can query.}
 
-\item{tables}{Tables to describe in the agent's system prompt. Supply a
-character vector of table names, schema-qualified strings such as
-\code{"schema.table"}, or \link[DBI:Id]{DBI::Id} objects. The registry does not restrict
-which tables the connection can query. The default is every table
-returned by \code{\link[DBI:dbListTables]{DBI::dbListTables()}}. Strings containing dots are treated
-as schema-qualified names; use \code{DBI::Id(table = "a.b")} for a literal
-table name containing dots.}
+\item{tables}{Which tables to expose, used when a connection or a board is
+supplied.
+
+For a connection, a character vector of table names, qualified strings
+like \code{"schema.table"} or \code{"catalog.schema.table"}, or \code{DBI::Id} objects.
+Defaults to every table returned by \code{\link[DBI:dbListTables]{DBI::dbListTables()}}. Strings
+containing dots are interpreted as qualified names, at most three parts;
+use \code{DBI::Id(table = "a.b")} for literal table names containing dots. For Snowflake and Databricks
+connections, a \code{DBI::Id} ending in \code{catalog} or \code{schema} selects every
+table and view in that namespace. Leaving \code{tables} unset selects the
+current schema. A Databricks \code{hive_metastore} selection must include a
+schema. Snowflake selections import semantic views, and Databricks
+selections import metric views, as native trusted metrics and dimensions.
+Namespace selections read model definitions lazily. Explicitly selected
+models are read and validated when the data source is created.
+Databricks wildcard members require concrete column metadata from the
+warehouse.
+An exact physical-table selection also imports associated models when
+every physical dependency is selected. Only public relationships, facts,
+filters, and instructions are exposed to the agent.
+
+For a board, a named character vector of pins to read: the names become
+table names, and the values are pin names passed to \code{\link[pins:pin_read]{pins::pin_read()}}.}
+
+\item{exclude}{For Snowflake and Databricks namespace selections, optional
+unqualified object-name globs to omit, such as \code{"TMP_*"}.}
 
 \item{dictionary}{An optional path to a data dictionary describing the
 source's tables and columns, in the
@@ -23,57 +44,73 @@ source's tables and columns, in the
 \verb{Data dictionaries} section.}
 }
 \value{
-A \code{commons_data_source} object.
+A \code{commons_data_source} R6 object. Its internals are private and may
+change without notice.
 }
 \description{
-A data source combines a \pkg{DBI} connection with a table registry for a
-\code{\link[=commons]{commons()}} agent. The agent queries the connection directly; no data is
-copied.
+A data source is the set of tables available to a \code{\link[=commons]{commons()}} agent.
+}
+\details{
+\code{data_source()} accepts data in several forms, picked by the class of what
+you pass:
+\itemize{
+\item A DBI connection is queried as-is. Nothing is copied; the agent queries
+the database directly.
+\item Named data frames are loaded into an in-process DuckDB database. Use this
+when the data isn't already in a database.
+\item A \code{pins} board, e.g. \code{\link[pins:board_connect]{pins::board_connect()}}, is read into the same
+in-process database: each pin in \code{tables} becomes a table. Pin names are
+validated against the board at construction (a single listing call), but
+each pin is downloaded only when its table is first used. Calling the
+agent's \code{prewarm()} method (see \code{\link[=commons]{commons()}}) starts a background process
+that downloads the remaining pins into the local
+pins cache, so a first use typically only reads an already-downloaded
+file. Since the pins cache is on disk, \code{prewarm()} can also run
+ahead of deployment to warm the cache the deployed app will read. A
+table reflects the pin's value at first use and is not refreshed for
+the lifetime of the data source; if a pin can't be read (e.g. a network
+failure), the error surfaces at that first use and the read is retried
+on the next one.
+}
 }
 \section{Data dictionaries}{
 
-A data dictionary records what each table's rows represent, what its
-columns mean, allowed values and units, table relationships, and domain
-terms. commons uses it in three places:
-\itemize{
-\item The dataset-level \code{description} and \code{details}, along with the glossary,
-appear in the system prompt. Use these fields for rules that span tables
-and guidance about which tables answer a question.
-\item The first time a conversation touches a table---via the \code{describe_table}
-tool or a SQL query---the tool result includes that table's prose,
-documented columns, relationships, and relevant glossary definitions.
-\code{describe_table} merges documented columns with the live schema.
-\item The \code{search_context} tool searches the dictionary's prose, with one
-passage for each table and glossary term.
-}
+A data dictionary describes a data source's tables and columns: what each
+table's rows represent, what its columns mean, allowed values and units,
+how tables join, and definitions of domain terms. commons uses it to provide
+business context and governed definitions to the agent. See
+\code{vignette("commons", package = "commons")} for guidance on writing one.
+
+For Snowflake and Databricks sources, a fully qualified dictionary table
+name matches the same selected relation. A relative name is accepted when
+it matches only one selected relation. Authored prose takes precedence,
+while warehouse column types remain authoritative.
+
+A table's entry can also declare \code{definitions}: named expressions in the
+\href{https://data-dict.tidyverse.org/expressions.html}{data-dict expression language}.
+commons validates their inferred types and references, compiles them for
+the source's SQL backend, and makes them available to trusted metric
+calculations and custom SQL.
 }
 
 \section{Trust}{
 
-Before passing a query to the database, the \code{run_sql} tool checks its
-leading statement keyword against a denylist of common data- and
-schema-modifying operations. The check is a keyword filter; database
-permissions remain the access-control boundary. Open the connection in
-read-only mode where the backend supports it, and grant it access only to
-the tables the agent needs.
+The agent runs only read-only \code{SELECT} queries; statements that
+would modify data or schema (\code{INSERT}, \code{UPDATE}, \code{DROP}, and similar) are
+rejected before reaching the database. For the in-process DuckDB built from
+data frames, commons additionally disables extension loading and filesystem
+access. These are safeguards, not a sandbox: when you supply your own
+connection, still open it in read-only mode where the backend supports it.
+Snowflake and Databricks sources snapshot the principal and namespace at
+creation, and Snowflake its active and secondary roles as well, then reject
+catalog access and trusted calculations after any of those change. Authored
+and native semantic material is exposed only after a zero-row query
+succeeds for the current principal.
 }
 
 \examples{
-if (requireNamespace("duckdb", quietly = TRUE)) {
-  con <- DBI::dbConnect(duckdb::duckdb())
-  DBI::dbWriteTable(
-    con,
-    "sales",
-    data.frame(region = c("EMEA", "APAC"), revenue = c(100, 200))
-  )
+src <- data_source(
+  sales = data.frame(id = 1:2, revenue = c(100, 200))
+)
 
-  src <- data_source(con)
-  src$tables
-
-  DBI::dbDisconnect(con, shutdown = TRUE)
-}
-
-}
-\seealso{
-\code{\link[=commons]{commons()}} to build an agent over one or more data sources.
 }

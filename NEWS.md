@@ -1,3 +1,3 @@
-# commons 0.0.1
+# commons 0.1.0
 
-* Initial CRAN release.
+* Initial release.

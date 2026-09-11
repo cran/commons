@@ -3,9 +3,11 @@
 \docType{package}
 \name{commons-package}
 \alias{commons-package}
-\title{commons: Agents for Data Analysis}
+\title{commons: AI Agents for Data Analysis}
 \description{
-Implements large language model agents for answering questions about database tables. Agents combine 'DBI' database connections with table and column metadata from a data dictionary (\url{https://data-dict.tidyverse.org/}), using registered calculations when applicable and generating database queries otherwise. They can also be embedded in a 'Shiny' application.
+\if{html}{\figure{logo.png}{options: style='float: right' alt='logo' width='120'}}
+
+Implements trustworthy large language model agents. Connect raw data sources, a pool of trusted calculations, and a searchable context layer that demonstrates how to interpret them. Then, deploy data agents that answer questions, log interactions, and can be evaluated and improved over time.
 }
 \seealso{
 Useful links:
@@ -27,8 +29,6 @@ Authors:
 
 Other contributors:
 \itemize{
-  \item Garrick Aden-Buie \email{garrick@posit.co} (\href{https://orcid.org/0000-0002-7111-0077}{ORCID}) [contributor]
-  \item Carson Sievert \email{carson@posit.co} (\href{https://orcid.org/0000-0002-4958-2844}{ORCID}) [contributor]
   \item Posit Software, PBC (\href{https://ror.org/03wc8by49}{ROR}) [copyright holder, funder]
 }
 

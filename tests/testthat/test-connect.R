@@ -1,0 +1,247 @@
+test_that("connect_client normalizes the server URL", {
+  withr::local_envvar(CONNECT_API_KEY = "key")
+
+  client <- connect_client(server = "https://connect.example.com/")
+  expect_equal(client$server, "https://connect.example.com")
+
+  client <- connect_client(server = "https://connect.example.com/__api__")
+  expect_equal(client$server, "https://connect.example.com")
+})
+
+test_that("connect_client errors without credentials", {
+  withr::local_envvar(CONNECT_SERVER = NA, CONNECT_API_KEY = NA)
+  expect_snapshot(connect_client(), error = TRUE)
+  expect_snapshot(
+    connect_client(server = "https://connect.example.com"),
+    error = TRUE
+  )
+})
+
+test_that("is_connect_runtime detects Connect env vars", {
+  withr::local_envvar(POSIT_PRODUCT = NA, CONNECT_CONTENT_GUID = NA)
+  expect_false(is_connect_runtime())
+
+  withr::local_envvar(POSIT_PRODUCT = "CONNECT")
+  expect_true(is_connect_runtime())
+
+  withr::local_envvar(POSIT_PRODUCT = NA, CONNECT_CONTENT_GUID = "guid")
+  expect_true(is_connect_runtime())
+})
+
+test_that("connect_vanity_guid matches the full vanity URL", {
+  httr2::local_mocked_responses(function(req) {
+    url <- httr2::url_parse(req$url)
+    expect_equal(url$path, "/__api__/v1/search/content")
+    expect_equal(url$query$q, "my-agent")
+    expect_equal(url$query$include, "vanity_url")
+    httr2::new_response(
+      "GET",
+      req$url,
+      200L,
+      list(`Content-Type` = "application/json"),
+      charToRaw(jsonlite::toJSON(
+        list(
+          results = list(
+            list(
+              guid = "wrong-guid",
+              vanity_url = "https://connect.example.com/my-agent-test/"
+            ),
+            list(
+              guid = "right-guid",
+              vanity_url = "https://connect.example.com/my-agent/"
+            )
+          ),
+          total = 1L
+        ),
+        auto_unbox = TRUE
+      )),
+      request = req
+    )
+  })
+
+  guid <- connect_vanity_guid(
+    list(server = "https://connect.example.com", api_key = "key"),
+    "https://connect.example.com/content/my-agent",
+    "my-agent"
+  )
+
+  expect_equal(guid, "right-guid")
+})
+
+test_that("connect_vanity_guid explains an inaccessible URL", {
+  httr2::local_mocked_responses(function(req) {
+    httr2::new_response(
+      "GET",
+      req$url,
+      200L,
+      list(`Content-Type` = "application/json"),
+      charToRaw(jsonlite::toJSON(
+        list(
+          results = list(),
+          total = 1L
+        ),
+        auto_unbox = TRUE
+      )),
+      request = req
+    )
+  })
+
+  expect_snapshot(
+    connect_vanity_guid(
+      list(server = "https://connect.example.com", api_key = "key"),
+      "https://connect.example.com/content/missing",
+      "missing"
+    ),
+    error = TRUE
+  )
+})
+
+test_that("connect_trace_lines pages until the total is exhausted", {
+  pages <- list(
+    c("line1", "line2"),
+    "line3"
+  )
+  state <- new.env()
+  state$calls <- 0
+  local_mocked_bindings(
+    connect_req = function(client, ...) structure(list(), class = "fake_req")
+  )
+  local_mocked_bindings(
+    req_url_query = function(req, ...) req,
+    req_perform = function(req, ...) {
+      state$calls <- state$calls + 1
+      state$calls
+    },
+    resp_has_body = function(resp) TRUE,
+    resp_body_string = function(resp) {
+      paste(pages[[resp]], collapse = "\n")
+    },
+    resp_header = function(resp, name) {
+      if (name == "Server") "Posit Connect v2026.06.1" else "3"
+    },
+    .package = "httr2"
+  )
+
+  lines <- connect_trace_lines(list(server = "s", api_key = "k"), "guid")
+
+  expect_equal(lines, c("line1", "line2", "line3"))
+  expect_equal(state$calls, 2)
+})
+
+test_that("connect_trace_lines reads collector and legacy stores", {
+  httr2::local_mocked_responses(function(req) {
+    url <- req$url
+    if (grepl("/jobs/job/traces", url, fixed = TRUE)) {
+      return(httr2::new_response(
+        "GET", url, 200L,
+        list(`X-Total-Count` = "1"), charToRaw("legacy"), request = req
+      ))
+    }
+    if (grepl("/jobs", url, fixed = TRUE)) {
+      return(httr2::new_response(
+        "GET", url, 200L,
+        list(`Content-Type` = "application/json"),
+        charToRaw('[{"key":"job"}]'),
+        request = req
+      ))
+    }
+    httr2::new_response(
+      "GET", url, 200L,
+      list(Server = "Posit Connect v2026.07.0", `X-Total-Count` = "1"),
+      charToRaw("current"), request = req
+    )
+  })
+
+  lines <- connect_trace_lines(
+    list(server = "https://connect.example.com", api_key = "k"),
+    "guid",
+    enough = function(lines) TRUE
+  )
+
+  expect_equal(lines, c("current", "legacy"))
+})
+
+test_that("connect_trace_lines falls back when the content endpoint is absent", {
+  local_mocked_bindings(connect_job_trace_lines = function(...) "legacy")
+  httr2::local_mocked_responses(function(req) {
+    httr2::new_response(
+      "GET", req$url, 404L, list(), raw(), request = req
+    )
+  })
+
+  lines <- connect_trace_lines(
+    list(server = "https://connect.example.com", api_key = "k"), "guid"
+  )
+
+  expect_equal(lines, "legacy")
+})
+
+test_that("parse_connect_version parses Connect version strings", {
+  expect_equal(
+    parse_connect_version("Posit Connect v2026.07.0"),
+    numeric_version("2026.07.0")
+  )
+  expect_equal(
+    parse_connect_version("2026.09.0"),
+    numeric_version("2026.09.0")
+  )
+  expect_null(parse_connect_version("nginx"))
+  expect_null(parse_connect_version(list()))
+})
+
+test_that("connect_trace_lines explains auth failures on the traces endpoint", {
+  local_mocked_bindings(
+    connect_req = function(client, ...) structure(list(), class = "fake_req")
+  )
+  local_mocked_bindings(
+    req_url_query = function(req, ...) req,
+    req_perform = function(req, ...) {
+      rlang::abort("HTTP 403 Forbidden.", class = "httr2_http_403")
+    },
+    .package = "httr2"
+  )
+
+  expect_snapshot(
+    connect_trace_lines(list(server = "s", api_key = "k"), "guid"),
+    error = TRUE
+  )
+})
+
+test_that("connect_user_guid pages past the first page of prefix matches", {
+  pages <- list(
+    lapply(1:500, function(i) {
+      list(username = paste0("jdoe", i), guid = paste0("g", i))
+    }),
+    list(list(username = "jdoe", guid = "guid-jdoe"))
+  )
+  local_mocked_bindings(
+    connect_req = function(client, ...) structure(list(), class = "fake_req")
+  )
+  local_mocked_bindings(
+    req_url_query = function(req, ..., page_number) page_number,
+    req_perform = function(req, ...) req,
+    resp_body_json = function(resp, ...) list(results = pages[[resp]]),
+    .package = "httr2"
+  )
+
+  guid <- connect_user_guid(list(server = "s", api_key = "k"), "jdoe")
+
+  expect_equal(guid, "guid-jdoe")
+})
+
+test_that("connect_user_guid errors when no user matches", {
+  local_mocked_bindings(
+    connect_req = function(client, ...) structure(list(), class = "fake_req")
+  )
+  local_mocked_bindings(
+    req_url_query = function(req, ...) req,
+    req_perform = function(req, ...) req,
+    resp_body_json = function(resp, ...) list(results = list()),
+    .package = "httr2"
+  )
+
+  expect_snapshot(
+    connect_user_guid(list(server = "s", api_key = "k"), "jdoe"),
+    error = TRUE
+  )
+})

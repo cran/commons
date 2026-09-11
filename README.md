@@ -1,87 +1,110 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-# commons
+# commons <a href="https://posit-dev.github.io/commons/"><img src="man/figures/logo.png" align="right" height="240" alt="The package's hex sticker; a Common Kingfisher drawn in a cartoonish style, sitting on a park bench with a plaque reading 'commons'. Behind the bird is an open green space." /></a>
 
-commons builds self-service data science agents for your organization:
-agents that answer data questions using the definitions your data team
-already maintains.
+<!-- badges: start -->
 
-An agent is built from a `data_source()`, which is what it can query,
-and a `semantic_layer()`, which is a pool of trusted calculations. When
-a question matches a measure in the semantic layer, the agent runs that
-measure. When nothing matches, it falls back to reading your data
-documentation and writing a SQL query.
+[![Lifecycle:
+experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
+<!-- badges: end -->
+
+commons helps data scientists build trustworthy data agents.
+
+Data teams typically have trusted code that they use to analyze their
+data and build reports and apps. commons leverages their expertise,
+situating that information in a series of prompts and tools designed to
+create an accurate, fast, and cost-effective agent.
+
+Trusted calculations can come from R code (as *measures*), [data
+dictionary](https://data-dict.tidyverse.org/) definitions, Snowflake
+semantic views, or Databricks metric views.
+
+<img src="https://github.com/user-attachments/assets/3a22c3cd-ae73-4177-a9c2-241f497b430d" alt="A screencast of a commons biodiversity agent. It identifies the site with the greatest biodiversity using a trusted calculation and shows the green marker for the Verified answer outcome. It then lists the species observed there using a direct data query and shows the yellow marker for the Untrusted outcome." width="100%" />
 
 ## Installation
+
+To install the package, run:
 
 ``` r
 install.packages("commons")
 ```
 
-## Usage
+Or, for the development version:
 
 ``` r
-library(commons)
+# install.packages("pak")
+pak::pak("posit-dev/commons/pkg-r")
 ```
 
-Point a data source at a database and, optionally, at a [data dictionary](https://data-dict.tidyverse.org/)
-describing it:
+## Get started
+
+commons uses [ellmer](https://ellmer.tidyverse.org/) to access LLMs, so
+you will need access to one of ellmer’s supported providers.
+
+We recommend building commons agents with the help of the [agent
+skill](https://agentskills.io/) that ships with the package. The skill
+helps coding agents build, evaluate, and improve commons agents.
+
+To make the skill available to Posit Assistant or Codex, copy the skill
+and its references to `.agents/skills`:
 
 ``` r
-con <- DBI::dbConnect(duckdb::duckdb())
-DBI::dbWriteTable(con, "orders", data.frame(
-  region = c("EMEA", "Americas", "EMEA", "APAC"),
-  revenue = c(500, 900, 1200, 300),
-  refunded = c(0, 100, 0, 0)
-))
-
-sales <- data_source(con, tables = "orders")
+skill <- system.file("skills", "commons", package = "commons")
+dir.create(".agents/skills", recursive = TRUE, showWarnings = FALSE)
+file.copy(skill, ".agents/skills", recursive = TRUE)
 ```
 
-Define the calculations you want the agent to prefer. Arguments that
-aren’t in the `arguments` schema are hidden from the model. An argument
-named after a data source receives that source’s connection.
+For Claude Code, copy the skill and its references to `.claude/skills`:
 
 ``` r
-measure_file <- tempfile(fileext = ".R")
-writeLines(
-  c(
-    "#' Net Revenue by Region",
-    "#'",
-    "#' @param region `enum[EMEA, Americas, APAC]` Sales region.",
-    "#' @measure",
-    "net_revenue_by_region <- function(region, warehouse) {",
-    "  DBI::dbGetQuery(",
-    "    warehouse,",
-    "    'SELECT sum(revenue - refunded) AS net FROM orders WHERE region = ?',",
-    "    params = list(region)",
-    "  )",
-    "}"
-  ),
-  measure_file
-)
-
-layer <- semantic_layer(measure_file)
-unlink(measure_file)
+skill <- system.file("skills", "commons", package = "commons")
+dir.create(".claude/skills", recursive = TRUE, showWarnings = FALSE)
+file.copy(skill, ".claude/skills", recursive = TRUE)
 ```
 
-Then, assemble the pieces with `commons()`. The function outputs an
-`ellmer::Chat`, so it works with
-[shinychat](https://posit-dev.github.io/shinychat/) out of the box.
+The [Introduction to
+commons](https://posit-dev.github.io/commons/articles/commons.html)
+vignette also explains the structure of a commons agent and the creation
+process.
 
-``` r
-agent <- commons(
-  ellmer::chat_anthropic(),
-  data_sources = list(warehouse = sales),
-  semantic_layer = layer
-)
+## Trusted answers
 
-agent$chat("What was net revenue in EMEA?")
-#> Net revenue in EMEA was $1,700.
-```
+There are two provenance paths available to a commons agent: when users
+ask questions for which there is trusted code, the agent follows the
+“happy path,” running that code and reporting the result. If the user
+asks a question for which trusted code is not available, the agent
+writes custom R or SQL code, leaning on additional context provided to
+the agent.
 
-That answer came from `net_revenue_by_region`, not from SQL the model
-wrote, so “net revenue” means what your organization says it means.
+Answers display provenance according to the analysis path followed, so
+users can determine how much trust to put in a given answer.
 
-See `vignette("commons")` to learn more.
+For more information, see the [Introduction to
+commons](https://posit-dev.github.io/commons/articles/commons.html)
+vignette.
+
+<!-- Diagram source: Introduction to commons vignette. Update it there, then save the image. https://github.com/posit-dev/commons/blob/a29ac09c39c8edb99f2a9ea0ecc1836e6538bb25/vignettes/commons.Rmd#L76 -->
+
+<img src="man/figures/README-trust-flow.png" alt="Flow diagram. A question first searches trusted calculations. The high-trust path runs a relevant trusted calculation and ends with a green check-shield marker for the Verified answer outcome. The lower-trust path searches context and writes custom SQL or R, ending with either a blue quote-mark citation marker for the Cited outcome or a yellow exclamation marker for the Untrusted outcome." width="684" />
+
+## Evaluation
+
+The [DevRel agent](https://github.com/posit-dev/devrel-agent) is an
+example commons agent that answers questions about adoption, engagement,
+and growth across Posit’s open-source projects. The DevRel agent
+repository contains an
+[evaluation](https://github.com/posit-dev/devrel-agent/tree/main/evals)
+that compares performance between the commons agent and Claude Code.
+Both have access to the same underlying data.
+
+In this evaluation, the commons agent had higher mean accuracy (86.3%
+vs. 83.5%), took less time to answer questions (a median of 31.0
+vs. 60.5 seconds), and cost less (\$5.64 vs. \$13.76 total).
+
+<img src="man/figures/README-eval-plot-1.png" alt="Three bar charts compare commons with Claude Code. commons has higher mean accuracy, lower median solver time, and lower total cost." width="100%" />
+
+In the evaluation, both harnesses use Claude Sonnet 5 at medium effort.
+The evaluation runs each of 32 questions three times. Questions require
+either a numeric answer, a table, a nuanced response, or recognition
+that the available data cannot answer them.

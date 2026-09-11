@@ -2,13 +2,10 @@
 # rest of the package works from. Only the data-dict.yaml format exists
 # today; when other formats arrive (a dbt manifest, harvested catalog
 # metadata), this is where the format is inferred and dispatched.
-data_dictionary <- function(path, call = rlang::caller_env()) {
+data_dictionary <- function(path) {
   rlang::check_installed("yaml")
-  rlang::check_string(path, allow_empty = FALSE, call = call)
-  if (!file.exists(path)) {
-    cli::cli_abort("{.arg dictionary} does not exist: {.path {path}}.", call = call)
-  }
-  new_data_dictionary(yaml::read_yaml(path), call = call)
+  rlang::check_string(path, allow_empty = FALSE)
+  new_data_dictionary(yaml::read_yaml(path))
 }
 
 as_data_dictionary <- function(x, call = rlang::caller_env()) {
@@ -16,7 +13,7 @@ as_data_dictionary <- function(x, call = rlang::caller_env()) {
     return(x)
   }
   if (is.character(x) && length(x) == 1) {
-    return(data_dictionary(x, call = call))
+    return(data_dictionary(x))
   }
   cli::cli_abort(
     "{.arg dictionary} must be a path to a data-dict.yaml file.",
@@ -26,26 +23,38 @@ as_data_dictionary <- function(x, call = rlang::caller_env()) {
 
 new_data_dictionary <- function(raw, call = rlang::caller_env()) {
   raw <- raw %||% list()
-  structure(
+  tables <- normalize_dictionary_tables(raw$tables, call = call)
+  definition_export <- definition_export_dictionary(tables, call = call)
+  tables <- dictionary_attach_definition_export(tables, definition_export)
+  dictionary <- structure(
     list(
       name = prose_field(raw$name),
       description = prose_field(raw$description),
       details = prose_field(raw$details),
-      tables = normalize_dictionary_tables(raw$tables, call = call),
+      tables = tables,
       relationships = normalize_dictionary_relationships(raw$relationships),
       glossary = normalize_dictionary_glossary(raw$glossary)
     ),
     class = "commons_data_dictionary"
   )
+  attr(dictionary, "definition_export") <- definition_export
+  dictionary
 }
 
 normalize_dictionary_tables <- function(tables, call = rlang::caller_env()) {
   tables <- key_by_name(tables, "table", call = call)
-  lapply(tables, function(table) {
-    table <- as.list(table)
+  out <- lapply(names(tables), function(name) {
+    table <- as.list(tables[[name]])
     table$columns <- key_by_name(table$columns, "column", call = call)
+    table$definitions <- key_by_name(
+      table$definitions,
+      "definition",
+      call = call
+    )
     table
   })
+  names(out) <- names(tables)
+  out
 }
 
 # data-dict.yaml lists tables and columns as sequences with a `name` field;
@@ -127,6 +136,7 @@ dictionary_entry_parts <- function(dictionary, table, columns_text) {
     entry$description,
     entry$details,
     columns_text,
+    definitions_entry_text(entry$definitions),
     dictionary_relationships_text(dictionary, table)
   )
   c(parts, dictionary_terms_text(dictionary, paste(parts, collapse = "\n")))
@@ -178,7 +188,12 @@ dictionary_columns_text <- function(columns, live = NULL) {
 dictionary_column_line <- function(name, spec, live_type = NULL) {
   spec <- spec %||% list()
   qualifier <- paste(
-    c(spec$type %||% live_type, spec$units, unlist(spec$constraints)),
+    c(
+      spec$type %||% live_type,
+      dictionary_nullability_fact(spec$nullable),
+      spec$units,
+      unlist(spec$constraints)
+    ),
     collapse = ", "
   )
   facts <- c(
@@ -198,6 +213,13 @@ dictionary_column_line <- function(name, spec, live_type = NULL) {
     line <- sprintf("%s: %s", line, detail)
   }
   line
+}
+
+dictionary_nullability_fact <- function(nullable) {
+  if (!is.logical(nullable) || length(nullable) != 1L || is.na(nullable)) {
+    return(NULL)
+  }
+  if (nullable) "nullable" else "not nullable"
 }
 
 # `values` can be a sequence ([M, F]) or a map of value to meaning
@@ -220,7 +242,11 @@ dictionary_range_fact <- function(range) {
   if (length(range) < 2) {
     return(NULL)
   }
-  sprintf("Range: %s to %s.", as.character(range[[1]]), as.character(range[[2]]))
+  sprintf(
+    "Range: %s to %s.",
+    as.character(range[[1]]),
+    as.character(range[[2]])
+  )
 }
 
 dictionary_examples_fact <- function(examples) {
@@ -239,7 +265,7 @@ dictionary_relationships_text <- function(dictionary, table) {
     relationships,
     function(rel) {
       text <- paste(c(rel$join, rel$description), collapse = " ")
-      grepl(word_pattern(table), text, ignore.case = TRUE)
+      dictionary_table_mentioned(table, dictionary, text)
     },
     logical(1)
   )
@@ -271,6 +297,15 @@ dictionary_relationships_text <- function(dictionary, table) {
   paste0("Relationships:\n\n", paste(lines, collapse = "\n"))
 }
 
+dictionary_table_mentioned <- function(table, dictionary, text) {
+  table_names <- c(table, dictionary$tables[[table]][[".authored_name"]])
+  any(vapply(
+    table_names,
+    function(name) grepl(word_pattern(name), text, ignore.case = TRUE),
+    logical(1)
+  ))
+}
+
 # Definitions of glossary terms the entry references but the system prompt
 # doesn't already carry (i.e. terms past the ambient cap).
 dictionary_terms_text <- function(dictionary, text) {
@@ -290,7 +325,7 @@ dictionary_terms_text <- function(dictionary, text) {
 
 # Glossary entries are ambient in the system prompt up to a size cap, in
 # order of appearance; entries past it are co-resolved at first touch and
-# reachable with `search_context`.
+# searchable via the context layer.
 glossary_ambient <- function(dictionary, cap_chars = 4000) {
   glossary <- dictionary$glossary
   if (length(glossary) == 0) {
@@ -298,37 +333,4 @@ glossary_ambient <- function(dictionary, cap_chars = 4000) {
   }
   sizes <- cumsum(nchar(names(glossary)) + nchar(unlist(glossary)))
   names(glossary)[sizes <= cap_chars]
-}
-
-# ---- searchable context ----------------------------------------------------
-
-# What `search_context` searches, split at natural YAML boundaries (one chunk
-# per glossary term, per table's prose, and for the dataset details) so a hit
-# is a coherent unit. Column-level content stays out: first touch owns it, and
-# indexing it would pay for a second copy the agent already has.
-dictionary_context_chunks <- function(dictionary) {
-  if (is.null(dictionary)) {
-    return(character(0))
-  }
-
-  tables <- vapply(
-    names(dictionary$tables),
-    function(name) {
-      entry <- dictionary$tables[[name]]
-      prose <- paste(c(entry$description, entry$details), collapse = "\n\n")
-      if (!nzchar(prose)) {
-        return(NA_character_)
-      }
-      sprintf("Table `%s`: %s", name, prose)
-    },
-    character(1)
-  )
-  glossary <- sprintf(
-    "%s: %s",
-    names(dictionary$glossary),
-    vapply(dictionary$glossary, identity, character(1))
-  )
-
-  chunks <- c(dictionary$details, tables[!is.na(tables)], glossary)
-  unname(chunks[nzchar(chunks)])
 }

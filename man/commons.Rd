@@ -7,116 +7,189 @@
 commons(
   client,
   data_sources,
-  ...,
   semantic_layer = NULL,
-  system_prompt = ellmer::interpolate_file(system.file("prompts/system-prompt.md",
-    package = "commons"), date = Sys.Date())
+  context_layer = NULL,
+  ...,
+  instructions = NULL,
+  network = c("none", "full"),
+  log = FALSE,
+  share_with = NULL
 )
 }
 \arguments{
 \item{client}{An \link[ellmer:Chat]{ellmer::Chat} giving the provider and model to use, e.g.
-\code{\link[ellmer:chat_anthropic]{ellmer::chat_anthropic()}}. Any system prompt or tools already set on
-the client are ignored, with a warning; pass a system prompt to
-\code{system_prompt} instead.}
+\code{\link[ellmer:chat_anthropic]{ellmer::chat_anthropic()}}. For best results, enable thinking when
+supported by the selected provider and model. A system prompt already set
+on the client is ignored, with a warning; use \code{instructions} to add to
+commons' prompt.}
 
 \item{data_sources}{A \code{\link[=data_source]{data_source()}}, or a named list of them. Measures
 can take a source's connection as an argument named after the source; see
-\code{\link[=semantic_layer]{semantic_layer()}}. When there are several sources, the \code{run_sql} and
-\code{describe_table} tools take a source's name as a \code{source} argument.}
-
-\item{...}{These dots are for future extensions and must be empty.}
+\code{\link[=semantic_layer]{semantic_layer()}}.}
 
 \item{semantic_layer}{An optional \code{\link[=semantic_layer]{semantic_layer()}}.}
 
-\item{system_prompt}{The agent's system prompt, as a single string. The
-default loads the markdown prompt shipped with commons and interpolates
-its \code{{{date}}} keyword. To customize it, copy the file into your project
-and interpolate the edited version:
+\item{context_layer}{An optional \code{\link[=context_layer]{context_layer()}}.}
 
-\if{html}{\out{<div class="sourceCode r">}}\preformatted{file.copy(
-  system.file("prompts/system-prompt.md", package = "commons"),
-  "system-prompt.md"
-)
-commons(
+\item{...}{These dots are for future extensions and must be empty.}
+
+\item{instructions}{Optional instructions placed under an
+\verb{## Additional instructions} heading at the end of commons' built-in
+system prompt, as a single string or the path to a text or Markdown file.
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{commons(
   # ...
-  system_prompt = ellmer::interpolate_file(
-    "system-prompt.md",
-    date = Sys.Date()
-  )
+  instructions = "Use the organization's fiscal-year conventions."
 )
-}\if{html}{\out{</div>}}
+}\if{html}{\out{</div>}}}
 
-Pass values for any \code{{{keyword}}} tokens you add as arguments to
-\code{\link[ellmer:interpolate_file]{ellmer::interpolate_file()}}. commons appends the table and data
-dictionary documentation, so omit it from the file.}
+\item{network}{Whether the agent's R session has network access. One
+of
+\code{"none"} (the default) or \code{"full"}. The session uses OS sandboxing on
+Linux and macOS. On unsupported hosts, local development can opt in to
+best-effort R guardrails with
+\code{options(commons.allow_unsafe_fallback = TRUE)}. These guardrails
+are not a security boundary.}
+
+\item{log}{Whether to request conversation trajectory capture with
+OpenTelemetry (default \code{FALSE}). When \code{TRUE}, commons checks the tracing
+setup and warns with setup steps when it is incomplete. This feature
+requires Connect >= 2026.09.0.
+
+When deploying to Posit Connect, include
+\code{"OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"} in the \code{envVars}
+argument to \code{\link[rsconnect:deployApp]{rsconnect::deployApp()}} so \pkg{ellmer} includes message
+content. A server administrator must also set \code{OpenTelemetry.Enabled = true}
+and \code{OpenTelemetry.AllowContentInstrumentation = true}.
+
+Once the agent is deployed and serving traffic, you can read conversation
+histories back into R with \code{\link[=trajectory_read]{trajectory_read()}}.}
+
+\item{share_with}{An optional character vector of Connect usernames granted
+access to this content's trajectories when running on Posit Connect.
+Reading traces requires editor-level access, so named users are added as
+collaborators on the content. Note that users whose Connect \emph{account}
+role is viewer cannot read traces even when named here; trace readers
+need at least a publisher account.}
 }
 \value{
-An \link[ellmer:Chat]{ellmer::Chat} carrying commons' system prompt and tools.
+An \link[ellmer:Chat]{ellmer::Chat} subclass.
 }
 \description{
-\code{commons()} builds an \link[ellmer:Chat]{ellmer::Chat} with a system prompt that describes
-the available data and tools for searching measures and context,
-inspecting tables, and running SQL queries.
+\code{commons()} creates an \link[ellmer:Chat]{ellmer::Chat} subclass with tools and prompting that
+allow the agent to navigate its data sources, semantic layer, and context
+layer. Depending on the agent's choice of tools, responses can be
+deterministically classified as based on a trusted calculation, cited, or
+untrusted.
 }
 \details{
-\code{client} supplies the provider and model. commons replaces the client's
-system prompt and tools. Use \code{agent$chat()} to ask questions or
-\code{\link[shinychat:chat_mod_ui]{shinychat::chat_mod_ui()}} and \code{\link[shinychat:chat_mod_server]{shinychat::chat_mod_server()}} to embed the
-agent in a Shiny app.
-
-The agent first searches its \code{\link[=semantic_layer]{semantic_layer()}} for a matching measure. If
-one matches, the agent runs a calculation defined by your data team. If no
-measure matches, it reads the data documentation, inspects the relevant
-tables, and writes a SQL query.
+The provider and model come from \code{client}; commons sets its own system prompt
+and tools. Use \code{agent$chat()} to ask questions, \code{\link[=commons_theme]{commons_theme()}} and
+\code{\link[=commons_server]{commons_server()}} to embed the agent in Shiny, and \code{\link[vitals:generate]{vitals::generate()}}
+to use the agent as a vitals solver.
 }
+\section{Cache pre-warming}{
+
+A commons agent builds its context search index and downloads uncached pins
+the first time it needs them. \code{\link[=commons_server]{commons_server()}} and \code{\link[=commons_app]{commons_app()}} call the
+agent's \code{prewarm()} method automatically during post-startup idle time.
+
+To warm the caches before deployment, call \code{agent$prewarm()} in a
+pre-deploy script. The context index is cached on disk once per version of
+the context documents; pin downloads populate the local pins cache.
+
+To ship a pre-built context index with an app, configure a directory inside
+the app in both the pre-deploy script and the deployed app, then prewarm the
+agent before deploying:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{options(commons.context_cache = "commons-cache")
+agent <- commons(
+  ellmer::chat_anthropic(),
+  data_sources = data_source(sales = sales)
+)
+agent$prewarm()
+}\if{html}{\out{</div>}}
+
+Do not use \verb{app_cache/} for this workflow because rsconnect excludes it from
+deployed bundles. Without explicit configuration, commons uses Connect's
+persistent content data directory when available, an \verb{app_cache/} directory
+beside hosted apps, or the per-user cache directory. Set the cache directory
+with \code{options(commons.context_cache = "path/to/dir")} or the
+\code{COMMONS_CONTEXT_CACHE} environment variable. Set the option to \code{FALSE} to
+disable persistence. The cache is capped at 256 MB with least-recently-used
+eviction; change the cap with \code{options(commons.context_cache_max_size)}.
+}
+
+\section{Agent tools}{
+
+Depending on its semantic layer, context layer, and data sources, a commons
+agent receives some combination of these tools:
+\itemize{
+\item \code{search_pool} searches trusted calculations and semantic models.
+\item \code{search_catalog} searches a warehouse catalog.
+\item \code{call_measure} invokes an R measure.
+\item \code{call_metrics} invokes governed or warehouse-native metrics.
+\item \code{call_calculation} invokes an exact trusted query.
+\item \code{search_context} retrieves relevant business context.
+\item \code{describe_table} inspects a table or semantic model.
+\item \code{run_sql} executes a read-only SQL query.
+\item \code{run_r} executes R code to analyze results and render plots in the agent's
+R session.
+}
+
+These model-facing tools should be considered private. Their constructors
+are intentionally not exported, and their names, arguments, availability,
+and behavior may change without notice. Application code should configure
+an agent through \code{commons()} and its layer constructors rather than depend
+on individual tools.
+}
+
 \examples{
-if (requireNamespace("duckdb", quietly = TRUE)) {
-  con <- DBI::dbConnect(duckdb::duckdb())
-  DBI::dbWriteTable(
-    con,
-    "sales",
-    data.frame(
-      region = c("EMEA", "EMEA", "APAC"),
-      revenue = c(100, 250, 90)
-    )
+\dontrun{
+# A measure over local data computes directly in R.
+sem <- semantic_layer(
+  measure(
+    "order_count",
+    "Count of orders.",
+    function() nrow(my_sales),
+    arguments = list()
   )
+)
+agent <- commons(
+  ellmer::chat_anthropic(),
+  data_sources = data_source(sales = my_sales),
+  semantic_layer = sem
+)
+agent$chat("How many orders are there?")
 
-  measure_file <- tempfile(fileext = ".R")
-  writeLines(
-    c(
-      "#' Revenue by region",
-      "#'",
-      "#' @param region `string` Sales region.",
-      "#' @measure",
-      "revenue_by_region <- function(region, warehouse) {",
-      "  DBI::dbGetQuery(",
-      "    warehouse,",
-      "    'SELECT sum(revenue) AS revenue FROM sales WHERE region = ?',",
-      "    params = list(region)",
-      "  )",
-      "}"
-    ),
-    measure_file
+# A measure takes a connection as an argument named after a data source.
+# `warehouse` isn't in `arguments`, so the model never sees it; commons
+# supplies it when the measure runs. Bind model-supplied arguments through
+# DBI so they're quoted safely.
+con <- DBI::dbConnect(duckdb::duckdb())
+sem <- semantic_layer(
+  measure(
+    "revenue_by_region",
+    "Total revenue for a region.",
+    function(region, warehouse) {
+      DBI::dbGetQuery(
+        warehouse,
+        "SELECT sum(revenue) AS revenue FROM sales WHERE region = ?",
+        params = list(region)
+      )
+    },
+    arguments = list(region = ellmer::type_string("Sales region."))
   )
-  layer <- semantic_layer(measure_file)
-  unlink(measure_file)
+)
+agent <- commons(
+  ellmer::chat_anthropic(),
+  data_sources = list(warehouse = data_source(con)),
+  semantic_layer = sem
+)
 
-  agent <- commons(
-    ellmer::chat_anthropic(),
-    data_sources = list(warehouse = data_source(con)),
-    semantic_layer = layer
-  )
-
-  \dontrun{
-  # Users will need an Anthropic API key to run this code.
-  agent$chat("How much revenue came from EMEA?")
-  }
-
-  DBI::dbDisconnect(con, shutdown = TRUE)
+# Objects that aren't data sources (a pins board, an API client) come from
+# argument defaults in the measure, e.g. `board = pins::board_connect()`.
+# See ?semantic_layer.
 }
 
-}
-\seealso{
-\code{\link[=data_source]{data_source()}} for database connections and table documentation,
-and \code{\link[=semantic_layer]{semantic_layer()}} for governed calculations.
 }

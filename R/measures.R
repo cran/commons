@@ -1,57 +1,84 @@
 #' Create a semantic layer
 #'
-#' A semantic layer collects governed measures for a [commons()] agent. The
-#' agent searches these measures before writing SQL. When a measure matches,
-#' the agent runs the calculation defined by your data team.
+#' `semantic_layer()` collects trusted calculations for a [commons()] agent.
+#' Data dictionary definitions and warehouse semantic models contribute through
+#' [data_source()].
 #'
-#' @param ... Paths to R scripts or directories containing functions marked
-#'   with `@measure`.
+#' @param ... [measure()] objects, lists of measures, or paths to R scripts or
+#'   directories containing R scripts. Directory searches are not recursive.
+#'   File and inline measures can be freely mixed.
 #'
-#' @details
-#' A measure is an ordinary R function documented with roxygen comments and
-#' marked with `@measure`. It can take model-supplied and injected arguments:
+#' @section Measures from files:
+#' Character paths can name R scripts or directories containing them. Functions
+#' marked with `@measure` become measures; other functions in those files can be
+#' used as helpers.
 #'
-#' * Arguments documented with `@param` are supplied by the model.
-#' * Undocumented arguments are hidden from the model. [commons()] supplies a
-#'   matching data source's connection or keeps the argument's default. It
-#'   errors if neither is available.
+#' The roxygen title, description, and `@return` text describe the measure.
+#' Each `@param` marks a model-supplied argument and can declare its type:
+#' `string`, `integer`, `number`, `boolean`, `enum[value, ...]`, or an array
+#' such as `string[]`. Without a declaration, commons infers the type from the
+#' default, falling back to `string`.
 #'
-#' Because the measure receives its connection as an argument, the semantic
-#' layer can be defined before the connection is opened.
+#' Measure and helper source is visible in the agent's R session; evaluating a
+#' measure's name there prints its definition. Function environments,
+#' connections, and credentials are not shared with that session.
 #'
-#' For another dependency, such as an API client, use a default expression
-#' that constructs it. Referring to a variable instead would make the measure
-#' depend on the environment where the semantic layer was created.
+#' @section Measure arguments:
+#' A measure function can take two kinds of arguments:
 #'
-#' @return A `commons_semantic_layer` object.
+#' * Arguments documented with `@param` (or listed in `arguments`, for inline
+#'   [measure()]s) are supplied by the model.
+#' * Undocumented arguments are supplied by [commons()] when the measure runs.
+#'   An argument named after a data source receives its connection, even if
+#'   the argument has a default. Any other undocumented argument keeps its
+#'   default; if it has no default, [commons()] errors. The model never sees
+#'   these arguments.
 #'
-#' @seealso [commons()] to give a semantic layer to an agent.
+#' This means a measure can take the connection it needs as an argument
+#' rather than relying on a variable defined elsewhere, and you can create a
+#' semantic layer before connecting to a database.
+#'
+#' For objects that aren't data sources, such as a pins board or an API
+#' client, give the argument a default that builds the object, e.g.
+#' `board = pins::board_connect()`. Write the default as a call rather than a
+#' reference to a variable defined elsewhere, so the measure doesn't depend on
+#' where the semantic layer is created.
+#'
+#' @return A `commons_semantic_layer` R6 object. Its internals are private and
+#'   may change without notice.
+#'
+#' @seealso [measure()] to define a measure.
 #'
 #' @examples
-#' measure_file <- tempfile(fileext = ".R")
-#' writeLines(
-#'   c(
-#'     "#' Revenue by region",
-#'     "#'",
-#'     "#' @param region `string` Sales region.",
-#'     "#' @measure",
-#'     "revenue_by_region <- function(region, warehouse) {",
-#'     "  DBI::dbGetQuery(",
-#'     "    warehouse,",
-#'     "    'SELECT sum(revenue) AS revenue FROM sales WHERE region = ?',",
-#'     "    params = list(region)",
-#'     "  )",
-#'     "}"
-#'   ),
-#'   measure_file
+#' semantic_layer(
+#'   measure(
+#'     "order_count",
+#'     "Count of orders.",
+#'     function() 10,
+#'     arguments = list()
+#'   )
 #' )
 #'
-#' layer <- semantic_layer(measure_file)
-#' unlink(measure_file)
+#' \dontrun{
+#' # In R/semantic_layer.R, `warehouse` has no @param, so commons supplies it:
+#' #
+#' # #' @param region `string` The sales region.
+#' # #' @measure
+#' # revenue <- function(region, warehouse) {
+#' #   DBI::dbGetQuery(warehouse, ...)
+#' # }
+#'
+#' agent <- commons(
+#'   ellmer::chat_anthropic(),
+#'   data_sources = list(warehouse = data_source(DBI::dbConnect(...))),
+#'   semantic_layer = semantic_layer("R/semantic_layer.R")
+#' )
+#' }
 #'
 #' @export
 semantic_layer <- function(...) {
-  measures <- expand_measures(rlang::list2(...), rlang::caller_env())
+  expanded <- expand_measures(rlang::list2(...), rlang::caller_env())
+  measures <- expanded$measures
 
   check_measures(measures)
   names(measures) <- vapply(measures, tool_name, character(1))
@@ -63,9 +90,113 @@ semantic_layer <- function(...) {
     )
   }
 
-  new_semantic_layer(measures)
+  measure_provenance <- expanded$provenance
+  names(measure_provenance) <- names(measures)
+  measure_display <- Map(
+    measure_display_or_default,
+    measures,
+    expanded$measure_display
+  )
+  names(measure_display) <- names(measures)
+
+  # Measures that didn't come from files (so no harvested source) still get a
+  # readable, if comment-free, deparse.
+  fn_sources <- expanded$fn_sources
+  for (nm in setdiff(names(measures), names(fn_sources))) {
+    fn_sources[[nm]] <- fn_source_text(tool_fn(measures[[nm]]))
+  }
+
+  new_semantic_layer(
+    measures,
+    fn_sources,
+    measure_provenance,
+    measure_display
+  )
 }
 
+# Expand each `...` element into measures: character vectors are read from disk,
+# lists of measures are spliced in, and a lone measure is kept as is. `env` is
+# the caller of semantic_layer(), so measures read from disk close over the data
+# the user defined there rather than only the global environment. Function
+# sources, display metadata, and provenance harvested by read_measures() ride
+# alongside their measures in an internal bundle.
+expand_measures <- function(args, env = rlang::caller_env()) {
+  expanded <- lapply(args, function(arg) {
+    if (is.character(arg)) {
+      read_measures(arg, env)
+    } else if (inherits(arg, "commons_measure_files")) {
+      arg
+    } else if (is_measure_list(arg)) {
+      new_measure_files(arg)
+    } else {
+      new_measure_files(list(arg))
+    }
+  })
+  fn_sources <- unlist(lapply(expanded, `[[`, "fn_sources"))
+  fn_sources <- fn_sources[!duplicated(names(fn_sources))] %||% character()
+  list(
+    measures = do.call(c, lapply(expanded, `[[`, "measures")) %||% list(),
+    fn_sources = fn_sources,
+    provenance = do.call(c, lapply(expanded, `[[`, "provenance")) %||% list(),
+    measure_display = do.call(
+      c,
+      lapply(expanded, `[[`, "measure_display")
+    ) %||% list()
+  )
+}
+
+#' Create a measure
+#'
+#' A measure is a trusted calculation inside a [semantic_layer()]. Its function
+#' body is ordinary R; its `arguments` schema tells the model what inputs it can
+#' supply.
+#'
+#' Two return types receive special display handling: ggplots and [gt::gt()]
+#' tables are shown directly to the user in the opened measure result.
+#'
+#' For custom result content, `fn` can return an [ellmer::ContentToolResult].
+#' Its `value` is sent to the model and its `extra$display` supplies the
+#' shinychat body and card options. Custom HTML is presented inside the standard
+#' measure display, after its metadata and arguments. An optional `extra$data`
+#' value is made available in the agent's R session and removed from the result
+#' before it is returned to ellmer.
+#'
+#' @param name Measure name.
+#' @param description What the measure computes.
+#' @param fn Function that computes the measure.
+#' @param arguments A named list of [ellmer::type_string()] and friends
+#'   describing the arguments the model supplies. Arguments of `fn` not listed
+#'   here are hidden from the model: they receive a matching data source's
+#'   connection or keep their defaults. See [semantic_layer()].
+#' @param title Human-readable measure title to show in user interfaces. If
+#'   `NULL`, a title is derived from `name`.
+#'
+#' @return A measure object.
+#'
+#' @examples
+#' table <- data.frame(term = c("Headache", "Nausea"), count = c(7, 5))
+#' table_measure <- measure(
+#'   "adverse_events",
+#'   "Summarize adverse events.",
+#'   function() {
+#'     ellmer::ContentToolResult(
+#'       value = "Headache: 7; Nausea: 5",
+#'       extra = list(
+#'         display = shinychat::tool_result_display(
+#'           html = paste0(
+#'             "<table><tr><td>Headache</td><td>7</td></tr>",
+#'             "<tr><td>Nausea</td><td>5</td></tr></table>"
+#'           )
+#'         ),
+#'         data = table
+#'       )
+#'     )
+#'   }
+#' )
+#'
+#' @seealso [semantic_layer()] to collect measures into a layer.
+#'
+#' @export
 measure <- function(name, description, fn, arguments = list(), title = NULL) {
   rlang::check_string(name)
   rlang::check_string(description)
@@ -80,17 +211,15 @@ measure <- function(name, description, fn, arguments = list(), title = NULL) {
   )
 }
 
-expand_measures <- function(args, env = rlang::caller_env()) {
-  expanded <- lapply(args, function(arg) {
-    if (is.character(arg)) {
-      read_measures(arg, env)
-    } else if (is_measure_list(arg)) {
-      arg
-    } else {
-      list(arg)
-    }
-  })
-  unlist(expanded, recursive = FALSE) %||% list()
+measure_default_display <- function(td) {
+  list(
+    description = tool_description(td),
+    details = NULL
+  )
+}
+
+measure_display_or_default <- function(td, display) {
+  display %||% measure_default_display(td)
 }
 
 # Arguments of `fn` not described in `arguments` are supplied by commons(),
@@ -143,12 +272,25 @@ resolve_injections <- function(
   })
 }
 
-new_semantic_layer <- function(measures = list()) {
-  structure(list(measures = measures), class = "commons_semantic_layer")
+new_semantic_layer <- function(
+  measures = list(),
+  fn_sources = character(),
+  measure_provenance = list(),
+  measure_display = list()
+) {
+  SemanticLayer$new(
+    measures = measures,
+    fn_sources = fn_sources,
+    measure_provenance = measure_provenance,
+    measure_display = measure_display
+  )
 }
 
 check_semantic_layer <- function(semantic_layer, call = rlang::caller_env()) {
-  if (!inherits(semantic_layer, "commons_semantic_layer")) {
+  if (
+    !is.environment(semantic_layer) ||
+      !inherits(semantic_layer, "commons_semantic_layer")
+  ) {
     cli::cli_abort(
       "{.arg semantic_layer} must be a {.fn semantic_layer}.",
       call = call
@@ -160,7 +302,7 @@ check_measures <- function(measures, call = rlang::caller_env()) {
   ok <- vapply(measures, inherits, logical(1), "ellmer::ToolDef")
   if (!all(ok)) {
     cli::cli_abort(
-      "Every item in {.arg semantic_layer} must be an {.cls ellmer::ToolDef}.",
+      "Every item in {.arg semantic_layer} must be created by {.fn measure}.",
       call = call
     )
   }
@@ -170,53 +312,39 @@ is_measure_list <- function(x) {
   is.list(x) && !inherits(x, "ellmer::ToolDef")
 }
 
-search_measures_text <- function(registry, query, source_names = character()) {
-  if (length(registry) == 0) {
-    return("No measures are registered.")
-  }
-
-  catalog <- vapply(
-    registry,
-    function(td) paste(tool_name(td), tool_description(td)),
-    character(1)
-  )
-  hits <- lexical_rank(query, catalog, n = 5)
-  if (length(hits) == 0) {
-    return(sprintf(
-      "No measure matches \"%s\". Consider writing a SQL query.",
-      query
-    ))
-  }
-
-  blocks <- vapply(
-    registry[hits],
-    measure_schema_text,
-    character(1),
-    source_names = source_names
-  )
-  paste(blocks, collapse = "\n\n")
-}
-
-measure_schema_text <- function(td, source_names = character()) {
+measure_schema_text <- function(
+  td,
+  source_names = character(),
+  heading = tool_name(td)
+) {
   props <- tool_properties(td)
-  args <- if (length(props) == 0) {
-    "  (no arguments)"
-  } else {
-    paste(
-      vapply(
-        names(props),
-        function(nm) arg_schema_line(nm, props[[nm]]),
-        character(1)
-      ),
-      collapse = "\n"
+  args <- if (length(props) > 0) {
+    paste0(
+      "arguments:\n",
+      paste(
+        vapply(
+          names(props),
+          function(nm) arg_schema_line(nm, props[[nm]]),
+          character(1)
+        ),
+        collapse = "\n"
+      )
     )
+  } else {
+    ""
   }
+
+  details <- paste0(measure_sources_line(td, source_names), args)
+  details <- sub("\n$", "", details)
+  if (nzchar(details)) {
+    details <- paste0("\n\n", details)
+  }
+
   sprintf(
-    "### %s\n%s\n\n%sarguments:\n%s",
-    tool_name(td),
+    "### %s\n%s%s",
+    heading,
     tool_description(td),
-    measure_sources_line(td, source_names),
-    args
+    details
   )
 }
 
@@ -237,14 +365,21 @@ arg_schema_line <- function(name, type) {
   detail <- switch(
     kind,
     enum = sprintf("one of {%s}", paste(type_values(type), collapse = ", ")),
-    array = sprintf(
-      "array of {%s}",
-      paste(type_values(S7::prop(type, "items")), collapse = ", ")
-    ),
+    array = sprintf("array of {%s}", array_items_label(S7::prop(type, "items"))),
     kind
   )
   desc <- S7::prop(type, "description") %||% ""
   sprintf("  - %s (%s, %s) %s", name, detail, required, desc)
+}
+
+# An array's items can be an enum, whose vocabulary is worth listing, or a
+# basic type, which has no `values` property to read.
+array_items_label <- function(items) {
+  if (identical(type_kind(items), "enum")) {
+    paste(type_values(items), collapse = ", ")
+  } else {
+    type_kind(items)
+  }
 }
 
 # The provider sees only `call_measure`, so measure arguments are checked here.
@@ -313,6 +448,7 @@ coerce_arg <- function(td, nm, type, value, call = rlang::caller_env()) {
 
 # Isolate the ellmer internals used by registered measure tools.
 tool_name <- function(td) S7::prop(td, "name")
+tool_fn <- function(td) S7::S7_data(td)
 tool_description <- function(td) S7::prop(td, "description")
 tool_title <- function(td) {
   annotations <- S7::prop(td, "annotations")
