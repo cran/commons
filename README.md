@@ -20,7 +20,7 @@ Trusted calculations can come from R code (as *measures*), [data
 dictionary](https://data-dict.tidyverse.org/) definitions, Snowflake
 semantic views, or Databricks metric views.
 
-<img src="https://github.com/user-attachments/assets/3a22c3cd-ae73-4177-a9c2-241f497b430d" alt="A screencast of a commons biodiversity agent. It identifies the site with the greatest biodiversity using a trusted calculation and shows the green marker for the Verified answer outcome. It then lists the species observed there using a direct data query and shows the yellow marker for the Untrusted outcome." width="100%" />
+<img src="https://github.com/user-attachments/assets/3a22c3cd-ae73-4177-a9c2-241f497b430d" alt="A screencast of a commons biodiversity agent. It identifies the site with the greatest biodiversity using a trusted calculation and shows the green marker for the Trusted outcome. It then lists the species observed there using a direct data query and shows the yellow marker for the Untrusted outcome." width="100%" />
 
 ## Installation
 
@@ -64,7 +64,7 @@ file.copy(skill, ".claude/skills", recursive = TRUE)
 ```
 
 The [Introduction to
-commons](https://posit-dev.github.io/commons/articles/commons.html)
+commons](https://posit-dev.github.io/commons/r/articles/commons.html)
 vignette also explains the structure of a commons agent and the creation
 process.
 
@@ -81,12 +81,10 @@ Answers display provenance according to the analysis path followed, so
 users can determine how much trust to put in a given answer.
 
 For more information, see the [Introduction to
-commons](https://posit-dev.github.io/commons/articles/commons.html)
+commons](https://posit-dev.github.io/commons/r/articles/commons.html)
 vignette.
 
-<!-- Diagram source: Introduction to commons vignette. Update it there, then save the image. https://github.com/posit-dev/commons/blob/a29ac09c39c8edb99f2a9ea0ecc1836e6538bb25/vignettes/commons.Rmd#L76 -->
-
-<img src="man/figures/README-trust-flow.png" alt="Flow diagram. A question first searches trusted calculations. The high-trust path runs a relevant trusted calculation and ends with a green check-shield marker for the Verified answer outcome. The lower-trust path searches context and writes custom SQL or R, ending with either a blue quote-mark citation marker for the Cited outcome or a yellow exclamation marker for the Untrusted outcome." width="684" />
+<img src="man/figures/trust-flow.svg" alt="Flow diagram. A question first searches trusted calculations. The high-trust path runs a relevant trusted calculation and ends with a green check-shield marker for the Trusted outcome. The lower-trust path searches context and writes custom SQL, R, or Python, ending with either a blue quote-mark citation marker for the Cited outcome or a yellow exclamation marker for the Untrusted outcome." width="100%" />
 
 ## Evaluation
 

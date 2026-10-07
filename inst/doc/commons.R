@@ -24,3 +24,6 @@ documentation_marker <- function(
   )
 }
 
+## ----trust-flow---------------------------------------------------------------
+knitr::include_graphics("../man/figures/trust-flow.svg")
+

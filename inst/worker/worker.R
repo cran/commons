@@ -423,8 +423,12 @@ worker_init <- function(
   }
   # The sandboxes match symlink-free paths: Connect's packrat library is a
   # farm of symlinks into a shared cache, and macOS's /tmp and /var live
-  # under /private, so grant resolved paths alongside the originals.
+  # under /private, so grant resolved paths alongside the originals. Only
+  # symlinked packages get their own rule: Seatbelt fails to compile a profile
+  # with a rule per package on a library of thousands.
   pkg_dirs <- list.dirs(.libPaths(), recursive = FALSE)
+  pkg_targets <- resolve(pkg_dirs)
+  pkg_targets <- pkg_targets[pkg_targets != pkg_dirs]
   os_roots <- switch(
     sysname,
     Linux = c(
@@ -438,7 +442,7 @@ worker_init <- function(
   read_roots <- unique(c(
     R.home(),
     .libPaths(),
-    resolve(pkg_dirs),
+    pkg_targets,
     os_roots
   ))
   read_roots <- read_roots[dir.exists(read_roots)]
@@ -514,23 +518,30 @@ worker_run_code <- function(
     if (is.null(last_plot)) {
       return()
     }
+    add(
+      "plot",
+      path = render_plot(plot_pixel_ratio),
+      model_path = render_plot(1L)
+    )
+    last_plot <<- NULL
+  }
+  render_plot <- function(pixel_ratio) {
     path <- tempfile("plot-", fileext = ".png")
     # HTML displays this 2x image at half its pixel dimensions, giving browsers
     # two image pixels per CSS pixel. Scaling resolution too preserves text and
     # point sizes at the logical display size.
     ragg::agg_png(
       path,
-      width = plot_width * plot_pixel_ratio,
-      height = plot_height * plot_pixel_ratio,
-      res = 72 * plot_pixel_ratio,
+      width = plot_width * pixel_ratio,
+      height = plot_height * pixel_ratio,
+      res = 72 * pixel_ratio,
       scaling = 1.5
     )
     tryCatch(
       grDevices::replayPlot(last_plot),
       finally = grDevices::dev.off()
     )
-    add("plot", path = path)
-    last_plot <<- NULL
+    path
   }
 
   handler <- new_output_handler(

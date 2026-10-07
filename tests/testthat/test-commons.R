@@ -5,7 +5,13 @@ test_that("commons() registers only the tools the agent's composition earns", {
   # No measures: nothing about the agent's surface should imply them.
   expect_setequal(
     vapply(agent$get_tools(), tool_name, character(1)),
-    c("search_context", "describe_table", "run_sql", "run_r")
+    c(
+      "search_context",
+      "describe_table",
+      "run_sql",
+      "run_r",
+      "describe_trust_system"
+    )
   )
   expect_no_match(agent$get_system_prompt(), "search_pool")
 
@@ -20,7 +26,8 @@ test_that("commons() registers only the tools the agent's composition earns", {
       "search_context",
       "describe_table",
       "run_sql",
-      "run_r"
+      "run_r",
+      "describe_trust_system"
     )
   )
 })
@@ -408,6 +415,8 @@ test_that("commons() errors on injection parameters matching no name", {
 
 
 test_that("prewarm() builds the context store ahead of the first search", {
+  # requires duckdb extensions via ragnar (#400)
+  skip_on_cran()
   cache_dir <- withr::local_tempdir()
   withr::local_options(commons.context_cache = cache_dir)
   path <- withr::local_tempfile(fileext = ".md")
@@ -442,6 +451,8 @@ test_that("prewarm() propagates failures", {
 })
 
 test_that("prewarm() records a cache-miss build and its own span", {
+  # requires duckdb extensions via ragnar (#400)
+  skip_on_cran()
   skip_if_not_installed("otelsdk")
   # A fresh cache root guarantees a cold build regardless of test order.
   withr::local_options(commons.context_cache = withr::local_tempdir())
@@ -463,6 +474,8 @@ test_that("prewarm() records a cache-miss build and its own span", {
 })
 
 test_that("prewarm() records a cache hit without a build span", {
+  # requires duckdb extensions via ragnar (#400)
+  skip_on_cran()
   skip_if_not_installed("otelsdk")
   withr::local_options(commons.context_cache = withr::local_tempdir())
 
