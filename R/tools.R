@@ -1,7 +1,8 @@
 # Register only the tools the agent's composition earns; nothing about its
 # surface should imply operations it doesn't have.
 build_commons_tools <- function(self, private) {
-  c(
+  trusted_only <- isTRUE(private$trusted_only)
+  tools <- c(
     if (pool_searchable(
       private$registry,
       private$definitions,
@@ -32,34 +33,13 @@ build_commons_tools <- function(self, private) {
     },
     list(
       tool_search_context(private),
-      tool_describe_table(private),
-      tool_run_sql(private),
-      tool_run_r(private),
-      tool_describe_trust_system()
-    )
-  )
-}
-
-tool_describe_trust_system <- function() {
-  body <- read_prompt("trust-system.md")
-  ellmer::tool(
-    function() {
-      tool_result(
-        body,
-        title = "Explained answer trust"
-      )
-    },
-    paste(
-      "Answer questions about the trust system. Call this tool when the user",
-      "asks about green shields, blue quotation marks, yellow warning circles,",
-      "trusted code, trusted context, or how answer trust is determined."
+      tool_describe_table(private)
     ),
-    name = "describe_trust_system",
-    annotations = ellmer::tool_annotations(
-      title = "Explaining answer trust",
-      read_only_hint = TRUE
-    )
+    # A trusted-only agent has no fallback path of its own.
+    if (!trusted_only) list(tool_run_sql(private), tool_run_r(private)),
+    if (!is.null(private$artifacts)) list(tool_edit_artifact(private))
   )
+  c(tools, list(tool_load_skill(vapply(tools, tool_name, character(1)))))
 }
 
 tool_search_catalog <- function(private) {
@@ -70,7 +50,7 @@ tool_search_catalog <- function(private) {
         return(tool_result(
           "This data source does not have a searchable catalog.",
           title = "Searched for a trusted calculation",
-          icon = maybe_icon("search")
+          icon = bsicons::bs_icon("search")
         ))
       }
       results <- catalog_search(src, query, kinds)
@@ -87,7 +67,7 @@ tool_search_catalog <- function(private) {
       tool_result(
         body,
         title = "Searched for a trusted calculation",
-        icon = maybe_icon("search"),
+        icon = bsicons::bs_icon("search"),
         markdown = body
       )
     },
@@ -107,7 +87,7 @@ tool_search_catalog <- function(private) {
     name = "search_catalog",
     annotations = ellmer::tool_annotations(
       title = "Searching for a trusted calculation",
-      icon = maybe_icon("search"),
+      icon = bsicons::bs_icon("search"),
       read_only_hint = TRUE
     )
   )
@@ -134,6 +114,7 @@ pool_searchable <- function(
 }
 
 tool_search_pool <- function(private) {
+  trusted_only <- isTRUE(private$trusted_only)
   has_semantic_stubs <- nrow(
     registry_semantic_stubs(private$semantic_models)
   ) > 0L
@@ -145,7 +126,11 @@ tool_search_pool <- function(private) {
   kinds <- c(
     if (length(private$registry) > 0) "measures (run with call_measure)",
     if (nrow(registry_defs(private$definitions)) > 0) {
-      "governed definitions (apply as {{name}} tokens in run_sql)"
+      if (trusted_only) {
+        "governed definitions (compute with call_metrics)"
+      } else {
+        "governed definitions (apply as {{name}} tokens in run_sql)"
+      }
     },
     if (nrow(registry_semantic_members(private$semantic_models)) > 0) {
       "native semantic-model metrics (run with call_metrics)"
@@ -165,7 +150,8 @@ tool_search_pool <- function(private) {
         query,
         source_names,
         semantic_models = private$semantic_models,
-        calculations = private$calculations
+        calculations = private$calculations,
+        trusted_only = trusted_only
       )
       display_body <- search_pool_text(
         private$registry,
@@ -174,12 +160,13 @@ tool_search_pool <- function(private) {
         source_names,
         semantic_models = private$semantic_models,
         calculations = private$calculations,
-        measure_titles = TRUE
+        measure_titles = TRUE,
+        trusted_only = trusted_only
       )
       tool_result(
         body,
         title = "Searched for a trusted calculation",
-        icon = maybe_icon("search"),
+        icon = bsicons::bs_icon("search"),
         markdown = display_body
       )
     },
@@ -204,7 +191,7 @@ tool_search_pool <- function(private) {
     name = "search_pool",
     annotations = ellmer::tool_annotations(
       title = "Searching for a trusted calculation",
-      icon = maybe_icon("search"),
+      icon = bsicons::bs_icon("search"),
       read_only_hint = TRUE
     )
   )
@@ -229,14 +216,15 @@ tool_call_metrics <- function(private) {
         filters = filters,
         where = where,
         source_name = source,
-        arguments = arguments
+        arguments = arguments,
+        trusted_only = isTRUE(private$trusted_only)
       )
     },
     sprintf(
       paste(
         "Compute trusted calculations from governed metrics, optionally",
         "grouped and filtered. Metric, grouping, and filter names come from",
-        "%s; commons compiles and runs the query."
+        "%s; the query is compiled and run for you."
       ),
       if (pool_searchable(
         private$registry,
@@ -293,7 +281,7 @@ tool_call_metrics <- function(private) {
     name = "call_metrics",
     annotations = ellmer::tool_annotations(
       title = "Running a trusted calculation",
-      icon = maybe_icon("shield-check"),
+      icon = bsicons::bs_icon("shield-check"),
       read_only_hint = TRUE
     )
   )
@@ -330,7 +318,7 @@ tool_call_calculation <- function(private) {
     name = "call_calculation",
     annotations = ellmer::tool_annotations(
       title = "Running a trusted calculation",
-      icon = maybe_icon("shield-check"),
+      icon = bsicons::bs_icon("shield-check"),
       read_only_hint = TRUE
     )
   )
@@ -369,7 +357,7 @@ tool_call_measure <- function(private) {
     name = "call_measure",
     annotations = ellmer::tool_annotations(
       title = "Running a trusted calculation",
-      icon = maybe_icon("shield-check"),
+      icon = bsicons::bs_icon("shield-check"),
       read_only_hint = TRUE
     )
   )
@@ -383,7 +371,7 @@ tool_search_context <- function(private) {
         return(tool_result(
           result,
           title = "Searched context",
-          icon = maybe_icon("book"),
+          icon = bsicons::bs_icon("book"),
           markdown = result
         ))
       }
@@ -398,13 +386,14 @@ tool_search_context <- function(private) {
     name = "search_context",
     annotations = ellmer::tool_annotations(
       title = "Searching context",
-      icon = maybe_icon("book"),
+      icon = bsicons::bs_icon("book"),
       read_only_hint = TRUE
     )
   )
 }
 
 tool_describe_table <- function(private) {
+  trusted_only <- isTRUE(private$trusted_only)
   has_semantic_models <- sources_have_semantic_models(private$sources) ||
     sources_have_semantic_stubs(private$sources)
   ellmer::tool(
@@ -413,33 +402,43 @@ tool_describe_table <- function(private) {
         resolve_sql_source(private$sources, source),
         table,
         source_name = source,
-        tracker = private$first_touch
+        tracker = private$first_touch,
+        trusted_only = trusted_only
       )
     },
-    if (has_semantic_models) {
+    if (trusted_only) {
+      paste(
+        if (has_semantic_models) {
+          paste(
+            "Describe a catalog object: a table's columns, types, and",
+            "documentation, or a semantic model's public members and any",
+            "verified queries."
+          )
+        } else {
+          "Describe a table: its columns, types, and documentation."
+        },
+        "Use this to find the names that trusted calculations accept."
+      )
+    } else if (has_semantic_models) {
       paste(
         "Describe a catalog object.",
-        "For tables, return columns, types, and sample rows.",
-        "For semantic models, return public members and any verified queries.",
-        "The sample summary covers the sampled rows only, so it cannot show",
-        "which values the whole table holds.",
-        "Before you report that a value is absent, query for it."
+        "For tables, return columns, types, and documentation.",
+        "For semantic models, return public members and any verified queries."
       )
     } else {
       paste(
-        "Describe a table: columns, types, and sample rows.",
-        "Use this before writing SQL against an unfamiliar table.",
-        "The sample summary covers the sampled rows only, so it cannot show",
-        "which values the whole table holds.",
-        "Before you report that a value is absent, query for it."
+        "Describe a table: its columns, types, and documentation.",
+        "Use this before writing SQL against an unfamiliar table."
       )
     },
     arguments = list(
       table = ellmer::type_string(
         if (has_semantic_models) {
           "The object name, as listed in the system prompt or search results."
-        } else {
+        } else if (trusted_only) {
           "The table name, as listed in the system prompt."
+        } else {
+          "The table name, as listed in the system prompt or found with run_sql."
         }
       ),
       source = sql_source_type(private$sources)
@@ -447,7 +446,7 @@ tool_describe_table <- function(private) {
     name = "describe_table",
     annotations = ellmer::tool_annotations(
       title = "Inspecting a table",
-      icon = maybe_icon("table"),
+      icon = bsicons::bs_icon("table"),
       read_only_hint = TRUE
     )
   )
@@ -483,7 +482,7 @@ tool_run_sql <- function(private) {
     name = "run_sql",
     annotations = ellmer::tool_annotations(
       title = "Retrieving data",
-      icon = maybe_icon("code-square"),
+      icon = bsicons::bs_icon("code-square"),
       read_only_hint = TRUE
     )
   )
@@ -528,26 +527,14 @@ call_measure_tool <- function(
   measure_provenance = list(),
   measure_display = list()
 ) {
+  run <- run_measure(registry, name, arguments, injections, sources)
   td <- registry[[name]]
-  if (is.null(td)) {
-    detail <- if (length(registry)) {
-      cli::format_inline("Registered measures: {.val {names(registry)}}.")
-    } else {
-      "No measures are registered."
-    }
-    cli::cli_abort(c("No measure named {.val {name}}.", i = detail))
-  }
+  args <- run$args
+  value <- run$value
   footer <- measure_source_footer(
     measure_provenance[[name]] %||% character()
   )
   metadata <- measure_metadata(td, measure_display[[name]])
-  args <- validate_measure_args(td, parse_json_args(arguments))
-  # A measure takes a source's connection by the source's name; a board source
-  # must have its pins loaded before that connection can answer a query.
-  for (source_name in names(injections[[name]])) {
-    source_ensure_all(sources[[source_name]])
-  }
-  value <- do.call(td, c(args, injections[[name]]))
   if (S7::S7_inherits(value, ellmer::ContentToolResult)) {
     return(measure_content_tool_result(
       args,
@@ -585,12 +572,38 @@ call_measure_tool <- function(
   tool_result(
     paste(c(format_measure_value(value), advert), collapse = "\n\n"),
     title = "Ran a trusted calculation",
-    icon = maybe_icon("shield-check"),
+    icon = bsicons::bs_icon("shield-check"),
     html = measure_display_html(args, value, metadata),
     footer = footer,
     tag = "A",
     show_tag = FALSE
   )
+}
+
+run_measure <- function(
+  registry,
+  name,
+  arguments,
+  injections = list(),
+  sources = list(),
+  call = rlang::caller_env()
+) {
+  td <- registry[[name]]
+  if (is.null(td)) {
+    detail <- if (length(registry)) {
+      cli::format_inline("Registered measures: {.val {names(registry)}}.")
+    } else {
+      "No measures are registered."
+    }
+    cli::cli_abort(c("No measure named {.val {name}}.", i = detail), call = call)
+  }
+  args <- validate_measure_args(td, parse_json_args(arguments), call = call)
+  # A measure takes a source's connection by the source's name; a board source
+  # must have its pins loaded before that connection can answer a query.
+  for (source_name in names(injections[[name]])) {
+    source_ensure_all(sources[[source_name]])
+  }
+  list(args = args, value = do.call(td, c(args, injections[[name]])))
 }
 
 measure_content_tool_result <- function(
@@ -617,7 +630,7 @@ measure_content_tool_result <- function(
   }
 
   title <- "Ran a trusted calculation"
-  icon <- maybe_icon("shield-check")
+  icon <- bsicons::bs_icon("shield-check")
   if (is.null(display)) {
     display <- shinychat::tool_result_display(
       title = title,
@@ -719,10 +732,14 @@ measure_plot_tool_result <- function(
   tool_result(
     model_value,
     title = "Ran a trusted calculation",
-    icon = maybe_icon("shield-check"),
+    icon = bsicons::bs_icon("shield-check"),
     html = measure_display_with_result_html(
       args,
-      measure_result_html(rendered$html),
+      measure_result_html(share_wrap(
+        rendered$html,
+        "figure",
+        share_clean_title(value$labels$title) %||% title
+      )),
       metadata
     ),
     footer = footer,
@@ -750,7 +767,7 @@ measure_failure_result <- function(
   tool_result(
     paste(c(model_content, note, advert), collapse = "\n\n"),
     title = "Ran a trusted calculation",
-    icon = maybe_icon("shield-check"),
+    icon = bsicons::bs_icon("shield-check"),
     html = measure_display_with_result_html(
       args,
       measure_result_html(html_escape(note), class),
@@ -800,7 +817,14 @@ measure_gt_table_tool_result <- function(
   model_note <- paste(model_note, collapse = " ")
   display_html <- measure_display_with_result_html(
     args,
-    measure_result_html(rendered$html, "commons-measure-gt-table"),
+    measure_result_html(
+      share_wrap(
+        rendered$html,
+        "table",
+        share_clean_title(gt_table_title(value)) %||% metadata$title
+      ),
+      "commons-measure-gt-table"
+    ),
     metadata
   )
   if (length(rendered$dependencies) > 0) {
@@ -816,7 +840,7 @@ measure_gt_table_tool_result <- function(
       collapse = "\n\n"
     ),
     title = "Ran a trusted calculation",
-    icon = maybe_icon("shield-check"),
+    icon = bsicons::bs_icon("shield-check"),
     html = display_html,
     footer = footer,
     tag = "A",
@@ -838,25 +862,59 @@ search_context_tool <- function(context, query) {
   tool_result(
     body,
     title = "Searched context",
-    icon = maybe_icon("book"),
+    icon = bsicons::bs_icon("book"),
     markdown = body
   )
 }
+
+describe_table_max_columns <- 50L
 
 describe_table_tool <- function(
   source,
   table,
   source_name = NULL,
-  tracker = NULL
+  tracker = NULL,
+  trusted_only = FALSE
 ) {
   source_state <- data_source_state(source)
-  d <- source_describe(source, table)
+  # Keep trusted-only inspection row-free. Other modes sample a few rows
+  # because some DBI drivers lose column classes on a zero-row result.
+  n_fallback_rows <- if (trusted_only) 0L else 5L
+  table <- source_resolve_table(source, table)
+  # Trusted-only agents can't query an unselected table, so they can't
+  # describe one either.
+  d <- source_describe(
+    source,
+    table,
+    n_fallback_rows = n_fallback_rows,
+    unselected = !trusted_only
+  )
   if (inherits(d, "commons_semantic_model_description")) {
     body <- semantic_model_description_text(d)
     return(tool_result(
       body,
       title = "Inspected a table",
-      icon = maybe_icon("table"),
+      icon = bsicons::bs_icon("table"),
+      markdown = body
+    ))
+  }
+  if (isFALSE(d$selected)) {
+    body <- paste(
+      sprintf(
+        "`%s` is not one of the data source's tables, so no documentation covers it.",
+        table
+      ),
+      sprintf(
+        "Columns of `%s`:\n\n%s",
+        table,
+        describe_schema_text(d$schema)
+      ),
+      sep = "\n\n"
+    )
+    return(tool_result(
+      body,
+      title = "Inspected a table",
+      icon = bsicons::bs_icon("table"),
       markdown = body
     ))
   }
@@ -871,28 +929,35 @@ describe_table_tool <- function(
     if (is.null(entry)) d$description
   )
 
-  sample <- sprintf(
-    "Sample summary (the sampled rows only, not necessarily every row):\n\n%s",
-    ellmer::df_schema(d$sample, max_cols = ncol(d$sample))
-  )
   if (is.null(entry)) {
     parts <- c(
       relation,
-      sprintf("Columns of `%s`:\n\n%s", table, df_to_markdown(d$schema)),
-      context,
-      sample
+      sprintf(
+        "Columns of `%s`:\n\n%s",
+        table,
+        describe_schema_text(d$schema)
+      ),
+      context
     )
   } else {
     columns <- sprintf(
       "Columns of `%s`:\n\n%s",
       table,
-      dictionary_columns_text(entry$columns, live = d$schema)
+      dictionary_columns_text(
+        entry$columns,
+        live = d$schema,
+        max_columns = describe_table_max_columns
+      )
     )
     parts <- c(
       relation,
-      dictionary_entry_parts(source_state$dictionary, table, columns),
-      context,
-      sample
+      dictionary_entry_parts(
+        source_state$dictionary,
+        table,
+        columns,
+        trusted_only = trusted_only
+      ),
+      context
     )
   }
   mark_table_touched(tracker, source_name, table)
@@ -901,9 +966,21 @@ describe_table_tool <- function(
   tool_result(
     body,
     title = "Inspected a table",
-    icon = maybe_icon("table"),
+    icon = bsicons::bs_icon("table"),
     markdown = body
   )
+}
+
+describe_schema_text <- function(schema) {
+  shown <- utils::head(schema, describe_table_max_columns)
+  paste0(
+    df_to_markdown(shown, max_rows = nrow(shown)),
+    omitted_columns_note(nrow(schema) - nrow(shown))
+  )
+}
+
+omitted_columns_note <- function(n) {
+  if (n > 0) sprintf("\n\nAdditional columns not shown: %d", n) else ""
 }
 
 run_sql_tool <- function(
@@ -916,14 +993,20 @@ run_sql_tool <- function(
 ) {
   res <- source_query(source, sql)
   body <- df_to_markdown(res)
-  display_md <- sprintf("```sql\n%s\n```\n\n%s", sql, body)
+  # Markdown gets shinychat's code highlighting, copy button, and table
+  # styling; the table stays HTML so the share wrapper survives.
+  display_md <- sprintf(
+    "```sql\n%s\n```\n\n%s",
+    sql,
+    share_wrap(df_to_html(res), "table")
+  )
   advert <- register_handle(handles, res)
   note <- applied_definitions_text(applied)
   entries <- dictionary_sql_entries(source, sql, source_name, tracker)
   tool_result(
     paste(c(body, note, advert, entries), collapse = "\n\n"),
     title = "Retrieved data",
-    icon = maybe_icon("code-square"),
+    icon = bsicons::bs_icon("code-square"),
     markdown = display_md,
     tag = "B",
     open = FALSE,
@@ -1120,7 +1203,7 @@ measure_args_html <- function(args) {
 measure_display_html <- function(args, value, metadata = NULL) {
   measure_display_with_result_html(
     args,
-    measure_result_html(format_measure_html(value)),
+    measure_result_html(format_measure_html(value, metadata$title)),
     metadata
   )
 }
@@ -1274,10 +1357,10 @@ measure_result_html <- function(content, class = NULL) {
 
 # Render a measure result for display: data frames become HTML tables; other
 # values reuse the text formatting, escaped for HTML.
-format_measure_html <- function(value) {
+format_measure_html <- function(value, title = NULL) {
   value <- collect_lazy_table(value)
   if (is.data.frame(value)) {
-    return(df_to_html(value))
+    return(share_wrap(df_to_html(value), "table", title))
   }
   html_escape(format_measure_value(value))
 }

@@ -67,8 +67,6 @@ test_that("live Snowflake discovers and describes catalog relations", {
     described$schema,
     c("column", "type", "nullable", "description")
   )
-  expect_true(nrow(described$sample) <= 5)
-  expect_equal(names(described$sample), described$schema$column)
   expect_equal(
     data_source_state(exact)$dictionary$tables[[label]]$description,
     "Authored live table description."
@@ -93,7 +91,6 @@ test_that("live Snowflake discovers and describes catalog relations", {
 
   expect_match(tool@value, "Relation type")
   expect_match(tool@value, "nullable")
-  expect_match(tool@value, "Sample summary")
 })
 
 test_that("live Snowflake rejects changed session namespaces", {
@@ -149,9 +146,12 @@ test_that("live Snowflake classifies denied query access", {
   con <- local_warehouse_connection("snowflake", require_table = FALSE)
 
   expect_equal(catalog_probe_relation(con, denied)$state, "authorization")
+  # Snowflake leaves a relation the role holds no privilege on out of the
+  # listing, and a name the listing never reported is missing rather than
+  # refused (tests/shared/catalog-access-precedence.json).
   expect_error(
     data_source(con, tables = denied),
-    class = "commons_catalog_authorization_error"
+    "not on the connection"
   )
 })
 
@@ -440,7 +440,12 @@ test_that("live Databricks discovers and describes catalog relations", {
     con,
     tables = DBI::Id(catalog = components[["catalog"]])
   )
-  current_source <- data_source(con)
+  # A second connection, since the session's namespace cannot change under
+  # the sources built on `con`.
+  current_con <- use_databricks_test_schema(
+    local_warehouse_connection("databricks")
+  )
+  current_source <- data_source(current_con)
 
   expect_equal(nrow(session), 1)
   expect_named(session, c("principal", "catalog", "schema"))
@@ -454,8 +459,6 @@ test_that("live Databricks discovers and describes catalog relations", {
     c("column", "type", "nullable", "description")
   )
   expect_false(anyNA(described$schema$nullable))
-  expect_true(nrow(described$sample) <= 5)
-  expect_equal(names(described$sample), described$schema$column)
   expect_equal(
     data_source_state(exact)$dictionary$tables[[label]]$description,
     "Authored live table description."
@@ -481,7 +484,6 @@ test_that("live Databricks discovers and describes catalog relations", {
   tool <- describe_table_tool(exact, label)
   expect_match(tool@value, "Relation type")
   expect_match(tool@value, "nullable")
-  expect_match(tool@value, "Sample summary")
 })
 
 test_that("live Databricks rejects changed session namespaces", {
@@ -509,9 +511,12 @@ test_that("live Databricks classifies denied query access", {
   con <- local_warehouse_connection("databricks", require_table = FALSE)
 
   expect_equal(catalog_probe_relation(con, denied)$state, "authorization")
+  # Unity Catalog leaves a relation the principal holds no privilege on out
+  # of the listing, and a name the listing never reported is missing rather
+  # than refused (tests/shared/catalog-access-precedence.json).
   expect_error(
     data_source(con, tables = denied),
-    class = "commons_catalog_authorization_error"
+    "not on the connection"
   )
 })
 
@@ -546,7 +551,7 @@ test_that("live Databricks searches a broad manifest before hydration", {
   expect_contains(names(catalog_search(source, query)), target)
   expect_null(data_source_state(source)$manifest$relations[[target]]$columns)
 
-  described <- source_describe(source, target, n_sample = 1L)
+  described <- source_describe(source, target)
 
   expect_gt(nrow(described$schema), 0L)
   expect_identical(
@@ -631,7 +636,17 @@ test_that("live Databricks binds native metric-view parameters", {
 test_that("live Databricks handles quoted relation and column names", {
   warehouse_test_table("databricks")
   con <- local_warehouse_connection("databricks")
-  DBI::dbExecute(con, "USE CATALOG `hive_metastore`")
+  # Only the hive_metastore listing reports a session's temporary views, and
+  # a Unity Catalog-only workspace has no hive_metastore.
+  tryCatch(
+    DBI::dbExecute(con, "USE CATALOG `hive_metastore`"),
+    error = function(err) {
+      if (!grepl("NO_SUCH_CATALOG|HIVE_METASTORE_DISABLED", conditionMessage(err))) {
+        stop(err)
+      }
+      skip("The workspace has no hive_metastore catalog")
+    }
+  )
   DBI::dbExecute(con, "USE SCHEMA `default`")
 
   table <- DBI::Id(table = "commons quoted.table")
@@ -653,7 +668,6 @@ test_that("live Databricks handles quoted relation and column names", {
 
   expect_identical(data_source_state(source)$table_ids[["commons quoted.table"]], table)
   expect_equal(described$schema$column, "quoted column")
-  expect_equal(described$sample[["quoted column"]], 1L)
 })
 
 test_that("live Databricks executes compiled definition mappings", {

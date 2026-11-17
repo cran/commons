@@ -53,7 +53,6 @@ catalog_test_columns <- function() {
 }
 
 test_that("data_dictionary() reads and keys tables and columns", {
-  skip_if_not_installed("yaml")
   dict <- data_dictionary(local_dict_path())
 
   expect_s3_class(dict, "commons_data_dictionary")
@@ -66,6 +65,52 @@ test_that("data_dictionary() reads and keys tables and columns", {
   expect_equal(dict$tables$sales$columns$revenue$units, "USD")
   expect_named(dict$glossary, c("AOV", "booked"))
   expect_length(dict$relationships, 1)
+})
+
+# Which files load is a cross-language contract, so the cases live in
+# tests/shared/data-dictionary-read.json and the Python suite runs the same
+# ones. The fixture pins the refusal as a slug; the wording belongs to each
+# language.
+dictionary_read_error_patterns <- list(
+  missing_tables = "no top-level .*tables"
+)
+
+test_that("data_dictionary() matches the shared read fixture", {
+  cases <- shared_fixture("data-dictionary-read")$read_dictionary_file$cases
+  expect_gt(length(cases), 0)
+  errors <- Filter(function(case) !is.null(case$error), cases)
+  expect_setequal(
+    vapply(errors, function(case) case$error, character(1)),
+    names(dictionary_read_error_patterns)
+  )
+
+  for (case in cases) {
+    path <- withr::local_tempfile(fileext = ".yaml")
+    writeLines(case$yaml, path, sep = "")
+    if (!is.null(case$error)) {
+      expect_error(
+        data_dictionary(path),
+        dictionary_read_error_patterns[[case$error]],
+        info = case$name
+      )
+      next
+    }
+    expect_equal(
+      names(data_dictionary(path)$tables) %||% character(),
+      as.character(unlist(case$tables)),
+      info = case$name
+    )
+  }
+})
+
+test_that("a dictionary path without tables errors in data_source()", {
+  path <- withr::local_tempfile(fileext = ".yaml")
+  writeLines(c("columns:", "  - name: hike_name"), path)
+  expect_snapshot(
+    data_source(sales = test_sales(), dictionary = path),
+    error = TRUE,
+    transform = function(x) gsub(path, "<path>", x, fixed = TRUE)
+  )
 })
 
 test_that("pre-keyed maps of tables and columns are accepted", {
@@ -105,7 +150,6 @@ test_that("unknown fields and missing sections are tolerated", {
 })
 
 test_that("data_source() accepts a dictionary path", {
-  skip_if_not_installed("yaml")
   src <- data_source(sales = test_sales(), dictionary = local_dict_path())
   expect_s3_class(data_source_state(src)$dictionary, "commons_data_dictionary")
 })
@@ -118,7 +162,6 @@ test_that("data_source() rejects other dictionary inputs", {
 })
 
 test_that("dictionary content lands in the system prompt", {
-  skip_if_not_installed("yaml")
   src <- local_dict_source()
   prompt <- commons_system_prompt(list(src))
 
@@ -130,7 +173,6 @@ test_that("dictionary content lands in the system prompt", {
 })
 
 test_that("multi-source prompts label dictionary blocks by source", {
-  skip_if_not_installed("yaml")
   sources <- list(
     sales_db = local_dict_source(),
     crm = data_source(accounts = data.frame(id = 1))
@@ -163,8 +205,17 @@ test_that("glossary entries past the cap are co-resolved at first touch", {
   expect_no_match(entry, "AOV: x", fixed = TRUE)
 })
 
+test_that("describe_table documents a selected table under a qualified name", {
+  src <- local_dict_source()
+
+  for (name in c("main.sales", "memory.main.SALES")) {
+    res <- describe_table_tool(src, name)
+    expect_match(res@value, "One row per order line", fixed = TRUE)
+    expect_match(res@value, "Columns of `sales`", fixed = TRUE)
+  }
+})
+
 test_that("describe_table merges the dictionary with the live schema", {
-  skip_if_not_installed("yaml")
   res <- describe_table_tool(local_dict_source(), "sales")
 
   expect_match(res@value, "One row per order line", fixed = TRUE)
@@ -173,10 +224,9 @@ test_that("describe_table merges the dictionary with the live schema", {
     "- order_id (number(id), primary_key): Unique order identifier.",
     fixed = TRUE
   )
-  expect_match(res@value, "- product_line (character)", fixed = TRUE)
+  expect_match(res@value, "- product_line (VARCHAR)", fixed = TRUE)
   expect_match(res@value, "not present in the table: booked_at", fixed = TRUE)
   expect_match(res@value, "sales.rep = reps.name (many-to-one)", fixed = TRUE)
-  expect_match(res@value, "Sample summary", fixed = TRUE)
 })
 
 test_that("warehouse metadata supplements an authored dictionary", {
@@ -248,7 +298,6 @@ test_that("warehouse metadata supplements an authored dictionary", {
     merged$definition_bindings$columns$orders,
     c(amount = "AMOUNT", missing = NA_character_)
   )
-  expect_true(merged$definition_bindings$strict)
   expect_length(merged$dictionary$relationships, 1L)
   entry <- dictionary_entry_text(
     merged$dictionary,
@@ -398,7 +447,6 @@ test_that("physical column names do not redefine the authored namespace", {
 })
 
 test_that("a SQL query delivers a table's entry once", {
-  skip_if_not_installed("yaml")
   src <- local_dict_source()
   tracker <- new.env(parent = emptyenv())
 
@@ -411,7 +459,6 @@ test_that("a SQL query delivers a table's entry once", {
 })
 
 test_that("describing a table forestalls the SQL-side delivery", {
-  skip_if_not_installed("yaml")
   src <- local_dict_source()
   tracker <- new.env(parent = emptyenv())
 
@@ -422,7 +469,6 @@ test_that("describing a table forestalls the SQL-side delivery", {
 })
 
 test_that("first-touch state is keyed by source", {
-  skip_if_not_installed("yaml")
   tracker <- new.env(parent = emptyenv())
 
   first <- run_sql_tool(
@@ -443,7 +489,6 @@ test_that("first-touch state is keyed by source", {
 })
 
 test_that("queries that touch no documented table append nothing", {
-  skip_if_not_installed("yaml")
   src <- local_dict_source()
 
   expect_no_match(
@@ -461,7 +506,6 @@ test_that("queries that touch no documented table append nothing", {
 test_that("dictionary prose is searchable via the context layer", {
   # requires duckdb extensions via ragnar (#400)
   skip_on_cran()
-  skip_if_not_installed("yaml")
   layer <- augment_context_layer(NULL, list(local_dict_source()))
 
   hits <- context_search(layer, "average order value")
@@ -477,7 +521,6 @@ test_that("dictionary prose is searchable via the context layer", {
 
 
 test_that("agent tools share first-touch state", {
-  skip_if_not_installed("yaml")
   agent <- test_agent(
     data_sources = list(
       sales_db = data_source(

@@ -9,7 +9,10 @@ test_that("parse_commons_citation matches the shared cases", {
     } else {
       expect_identical(
         out,
-        list(explanation = case$expected$explanation, quote = case$expected$quote),
+        list(
+          explanation = case$expected$explanation,
+          quote = case$expected$quote
+        ),
         info = case$name
       )
     }
@@ -17,15 +20,14 @@ test_that("parse_commons_citation matches the shared cases", {
 })
 
 test_that("citation decisions match the shared record shape", {
-  # The shape is what the trajectory reviewer reads back out of the span, so
-  # drive the real producers rather than asserting on a hand-built list.
+  # Drive the real producers rather than asserting on a hand-built list.
   cases <- shared_fixture("citations")$citation_decision$cases
   expect_setequal(
     vapply(cases, function(case) case$decision$status, character(1)),
     c("accepted", "rejected", "malformed")
   )
 
-  malformed <- "<commons-citation>\n\nno blockquote\n\n</commons-citation>"
+  malformed <- "<citation>\n\nno blockquote\n\n</citation>"
 
   for (case in cases) {
     want <- case$decision
@@ -35,7 +37,11 @@ test_that("citation decisions match the shared record shape", {
       corpus <- if (identical(want$status, "accepted")) {
         list(list(label = want$label, kind = want$kind, text = want$quote))
       } else {
-        list(list(label = "documentation", kind = "prose", text = "No support."))
+        list(list(
+          label = "documentation",
+          kind = "prose",
+          text = "No support."
+        ))
       }
       render_citation_aside(want$quote, "why", corpus)$decision
     }
@@ -67,9 +73,9 @@ citation_scan_padding <- function(case, text) {
   if (is.null(case$pad)) {
     return("")
   }
-  open_at <- regexpr("<commons-citation>", text, fixed = TRUE)
-  after_open <- substring(text, open_at + nchar("<commons-citation>"))
-  close_at <- regexpr("</commons-citation>", after_open, fixed = TRUE)
+  open_at <- regexpr("<citation>", text, fixed = TRUE)
+  after_open <- substring(text, open_at + nchar("<citation>"))
+  close_at <- regexpr("</citation>", after_open, fixed = TRUE)
   body <- substr(after_open, 1, close_at - 1L)
   strrep(
     case$pad$char,
@@ -192,7 +198,7 @@ test_that("an oversized unclosed citation keeps only a bounded close-tag suffix"
 
   expect_identical(
     scanner$feed(paste0(
-      "<commons-citation>",
+      "<citation>",
       strrep("x", ELEMENT_BODY_CAP + 1L)
     )),
     ""
@@ -207,4 +213,78 @@ test_that("an oversized unclosed citation keeps only a bounded close-tag suffix"
     nchar(CITATION_CLOSE) - 1L
   )
   expect_identical(scanner$finish(), "")
+})
+
+scan_artifact_chunks <- function(chunks, close_result) {
+  events <- list()
+  handler <- function(event) {
+    events[[length(events) + 1L]] <<- event
+    if (identical(event$type, "close")) {
+      gsub("{id}", event$id, close_result, fixed = TRUE)
+    }
+  }
+  scanner <- citation_scanner(on_artifact = handler)
+  fed <- vapply(chunks, scanner$feed, character(1), USE.NAMES = FALSE)
+  list(
+    text = paste0(paste(fed, collapse = ""), scanner$finish()),
+    events = merge_artifact_deltas(events)
+  )
+}
+
+merge_artifact_deltas <- function(events) {
+  failed <- vapply(
+    Filter(function(event) identical(event$type, "error"), events),
+    function(event) event$id %||% NA_character_,
+    character(1)
+  )
+  merged <- list()
+  for (event in events) {
+    if (identical(event$type, "delta")) {
+      if (event$id %in% failed) {
+        next
+      }
+      last <- merged[[length(merged)]]
+      if (identical(last$type, "delta") && identical(last$id, event$id)) {
+        merged[[length(merged)]]$text <- paste0(last$text, event$text)
+        next
+      }
+    }
+    merged[[length(merged) + 1L]] <- event
+  }
+  merged
+}
+
+test_that("the scanner streams artifacts as the shared cases say", {
+  spec <- shared_fixture("artifact-scan")
+  expect_gt(length(spec$cases), 0)
+  expect_identical(ARTIFACT_BODY_CAP, as.integer(spec$artifact_body_cap))
+  expect_identical(ARTIFACT_HEADER_CAP, as.integer(spec$artifact_header_cap))
+
+  for (case in spec$cases) {
+    pad <- if (is.null(case$pad)) {
+      ""
+    } else {
+      strrep(case$pad$char, case$pad$artifact_body_length)
+    }
+    expand <- function(x) gsub("{{pad}}", pad, x, fixed = TRUE)
+    text <- expand(gsub("{{split}}", "", case$text, fixed = TRUE))
+    chunks <- strsplit(expand(case$text), "{{split}}", fixed = TRUE)[[1]]
+    expected_events <- rapply(case$events, expand, how = "replace")
+
+    chunkings <- citation_scan_chunkings(
+      text,
+      chunks,
+      spec$exhaustive_split_max_chars
+    )
+    for (how in names(chunkings)) {
+      got <- scan_artifact_chunks(chunkings[[how]], spec$close_result)
+      info <- paste0(case$name, ", fed ", how)
+      expect_identical(got$text, expand(case$expected_text), info = info)
+      events <- jsonlite::fromJSON(
+        jsonlite::toJSON(got$events, auto_unbox = TRUE, null = "null"),
+        simplifyVector = FALSE
+      )
+      expect_identical(events, expected_events, info = info)
+    }
+  }
 })

@@ -14,7 +14,7 @@ A \code{commons_context_layer} R6 object. Its internals are private and
 may change without notice.
 }
 \description{
-A context layer contains text that helps a \code{\link[=commons]{commons()}} agent interpret its
+A context layer contains text that helps a commons agent interpret its
 data source.
 }
 \details{

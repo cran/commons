@@ -26,7 +26,6 @@ definition_mock_source <- function(table = "values", bindings = NULL) {
 }
 
 test_that("definitions compile and compose for a DuckDB source", {
-  skip_if_not_installed("yaml")
   source <- data_source(
     orders = data.frame(
       status_cd = c(10, 90),
@@ -67,7 +66,6 @@ test_that("definitions compile and compose for a DuckDB source", {
 })
 
 test_that("composed SQL and notes match the shared contract", {
-  skip_if_not_installed("yaml")
   fixture <- shared_fixture("definitions")$composed
   checked <- 0L
   for (path in definition_fixture_paths("valid")) {
@@ -93,7 +91,7 @@ test_that("composed SQL and notes match the shared contract", {
       }
     }
   }
-  expect_equal(checked, 42L)
+  expect_equal(checked, 45L)
 })
 
 test_that("source compilation rejects metrics over mixed-grain definitions", {
@@ -113,7 +111,6 @@ test_that("source compilation rejects metrics over mixed-grain definitions", {
 })
 
 test_that("warehouse lowering matches the shared contract", {
-  skip_if_not_installed("yaml")
   spec <- shared_fixture("definition-warehouse-sql")
   cases <- spec$cases
   expect_gt(length(cases), 0)
@@ -204,7 +201,6 @@ test_that("warehouse lowering matches the shared contract", {
 })
 
 test_that("warehouse refusals match the shared contract", {
-  skip_if_not_installed("yaml")
   unsupported <- shared_fixture("definition-warehouse-sql")[["unsupported"]]
   expect_gt(length(unsupported), 0)
   checked <- 0
@@ -214,7 +210,7 @@ test_that("warehouse refusals match the shared contract", {
     raw <- list(tables = list(list(
       name = case[["table"]],
       columns = case[["columns"]],
-      definitions = list(case[["definition"]])
+      definitions = c(case[["siblings"]], list(case[["definition"]]))
     )))
     # The source only has to expose the table; the dictionary supplies the
     # rest. DuckDB lowers every construct here, so its translation records
@@ -230,7 +226,10 @@ test_that("warehouse refusals match the shared contract", {
     for (target in names(case[["targets"]])) {
       expected <- case[["targets"]][[target]]
       info <- paste(case_name, target)
-      unknown <- setdiff(names(expected), c("code", "error_contains"))
+      unknown <- setdiff(
+        names(expected),
+        c("code", "composed_code", "error_contains")
+      )
       expect_true(
         length(unknown) == 0,
         info = paste(info, paste(unknown, collapse = ", "))
@@ -257,6 +256,21 @@ test_that("warehouse refusals match the shared contract", {
           "cannot be compiled",
           info = info
         )
+      } else if (!is.null(expected[["composed_code"]])) {
+        # Composition happens at construction, on a source of that dialect.
+        dialect <- sub("^SQL\\((.*)\\)$", "\\1", target)
+        local_mocked_bindings(
+          is_snowflake_connection = function(con) dialect == "snowflake",
+          is_databricks_connection = function(con) dialect == "databricks"
+        )
+        composed <- definition_compiled_table(
+          definition_compile_source(raw, definition_mock_source(case[["table"]]))
+        )
+        expect_equal(
+          composed[[case[["definition"]][["name"]]]]$sql,
+          expected[["composed_code"]],
+          info = info
+        )
       } else {
         expect_null(actual[["error"]], info = info)
         expect_equal(actual[["code"]], expected[["code"]], info = info)
@@ -269,7 +283,6 @@ test_that("warehouse refusals match the shared contract", {
 })
 
 test_that("source selection binds authored warehouse identifiers", {
-  skip_if_not_installed("yaml")
   local_mocked_bindings(
     is_snowflake_connection = function(con) TRUE,
     is_databricks_connection = function(con) FALSE
@@ -282,8 +295,7 @@ test_that("source selection binds authored warehouse identifiers", {
         order_total = "ORDER_TOTAL",
         tile_size = "TILE_SIZE"
       )
-    ),
-    strict = TRUE
+    )
   )
   source <- definition_mock_source("ANALYTICS.PUBLIC.ORDERS", bindings)
   compiled <- definition_compile_fixture("core.yaml", source)
@@ -306,35 +318,7 @@ test_that("source selection binds authored warehouse identifiers", {
   )
 })
 
-test_that("missing warehouse bindings fail before SQL can run", {
-  skip_if_not_installed("yaml")
-  local_mocked_bindings(
-    is_snowflake_connection = function(con) TRUE,
-    is_databricks_connection = function(con) FALSE
-  )
-  bindings <- list(
-    tables = c(orders = "ANALYTICS.PUBLIC.ORDERS"),
-    columns = list(
-      orders = c(
-        status_cd = "STATUS_CD",
-        order_total = "ORDER_TOTAL",
-        tile_size = NA_character_
-      )
-    ),
-    strict = TRUE
-  )
-
-  expect_error(
-    definition_compile_fixture(
-      "core.yaml",
-      definition_mock_source("ANALYTICS.PUBLIC.ORDERS", bindings)
-    ),
-    "authored column.*tile_size"
-  )
-})
-
 test_that("the source backend selects the destination target", {
-  skip_if_not_installed("yaml")
   local_mocked_bindings(
     is_snowflake_connection = function(con) FALSE,
     is_databricks_connection = function(con) TRUE
@@ -428,8 +412,7 @@ test_that("physical columns cannot be confused with sibling definitions", {
   )
   bindings <- list(
     tables = c(values = "ANALYTICS.PUBLIC.VALUES"),
-    columns = list(values = c(amount = "AMOUNT")),
-    strict = TRUE
+    columns = list(values = c(amount = "AMOUNT"))
   )
   compiled <- definition_compile_source(
     raw,

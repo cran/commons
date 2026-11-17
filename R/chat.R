@@ -5,7 +5,7 @@
 #' assemble the UI and server yourself with [commons_theme()] and 
 #' [commons_server()].
 #'
-#' @param client A [commons()] agent.
+#' @param client An [agent()].
 #' @param ... Extra arguments passed to [shiny::shinyApp()].
 #'
 #' @return A [shiny::shinyApp()] object.
@@ -19,9 +19,9 @@
 #'
 #' @examples
 #' \dontrun{
-#' agent <- commons(
+#' agent <- agent(
 #'   ellmer::chat_anthropic(),
-#'   data_sources = data_source(sales = sales)
+#'   commons = commons(data_sources = data_source(sales = sales))
 #' )
 #' commons_app(agent)
 #' }
@@ -36,6 +36,7 @@ commons_app <- function(client, ...) {
       "commons",
       id = "chat",
       theme = commons_theme(),
+      drawer = shinychat::chat_drawer(width = 640, open = FALSE),
       toolbar_global = if (rlang::is_interactive()) {
         bslib::toolbar(
           bslib::input_dark_mode(),
@@ -65,11 +66,31 @@ commons_app <- function(client, ...) {
 #' with [shinychat::page_chat()] or [shinychat::chat_ui()], passing
 #' `theme = commons_theme()` so the commons chat assets are on the page.
 #'
+#' The agent writes R code at runtime, so deployment tools can't detect the
+#' packages it uses. Include them in the deployment, e.g. by listing the
+#' tidyverse in the app's `DESCRIPTION`; see
+#' `vignette("commons", package = "commons")`.
+#'
+#' Documents the agent writes open in the chat's drawer, which
+#' [shinychat::page_chat()] and [shinychat::chat_ui()] enable by default. An app
+#' that passes `drawer = FALSE` gets no documents in view, though the agent
+#' still writes them. Documents read best in a wider drawer than the default,
+#' e.g. `drawer = shinychat::chat_drawer(width = 640, open = FALSE)`.
+#'
 #' `commons_theme()` bundles the commons chat CSS and JavaScript into an
 #' ordinary [bslib::bs_theme()] (via [shinychat::page_chat_theme()]), so it
 #' works anywhere a bslib theme does.
 #'
-#' @param client A [commons()] agent. In a deployed app, create the agent
+#' @section Sharing on Posit Connect:
+#' On Posit Connect, viewers can publish a read-only copy of a conversation,
+#' document, plot, or table. Sharing is available only when the app runs on
+#' Posit Connect. Shared items are published as the viewer who shares it, so
+#' only viewers whose Connect account can publish content can share. Items
+#' can only be shared with people who can view the commons apps. Sharing
+#' works on a default Connect installation, but administrators may have
+#' turned it off.
+#'
+#' @param client An [agent()]. In a deployed app, create the agent
 #'   inside the server function and pass it to `commons_server()` so each
 #'   Shiny session gets its own agent state.
 #' @param id The ID of the chat element; must match the `id` of the
@@ -91,9 +112,9 @@ commons_app <- function(client, ...) {
 #'
 #' server <- function(input, output, session) {
 #'   # One agent per session, so each user gets their own agent state
-#'   agent <- commons(
+#'   agent <- agent(
 #'     ellmer::chat_anthropic(),
-#'     data_sources = data_source(sales = sales)
+#'     commons = commons(data_sources = data_source(sales = sales))
 #'   )
 #'   commons_server("chat", agent)
 #' }
@@ -114,12 +135,29 @@ commons_server <- function(id, client, ...) {
   prewarm_on_idle(client)
 
   chat <- shinychat::chat_server(id, client = client, ...)
+  share_input <- share_server(
+    id,
+    client,
+    chat,
+    session = shiny::getDefaultReactiveDomain()
+  )
+  artifact_drawer_server(id, client, share_input = share_input)
   # shinychat owns the conversation identity (it sets the client's
   # `conversation_id` binding, which ellmer stamps on its spans); commons
   # only needs to know that a restore happened.
   chat$history$on_restore(function(values) {
     client$queue_restore_reminder()
+    store <- client$artifact_store()
+    if (!is.null(store)) {
+      artifact_store_restore(store, values$commons_artifacts)
+    }
   })
+  if (!is.null(client$artifact_store())) {
+    chat$history$on_save(function(values) {
+      values$commons_artifacts <- artifact_store_values(client$artifact_store())
+      values
+    })
+  }
   chat
 }
 
@@ -179,8 +217,21 @@ commons_chat_dependency <- function() {
     name = "commons-chat",
     version = paste0("0.0.0.9000.", as.integer(stamp)),
     src = c(file = src),
-    script = "commons-chat.js",
-    stylesheet = "commons-chat.css",
+    script = c("commons-chat.js", "commons-artifact.js"),
+    stylesheet = c("commons-chat.css", "commons-artifact.css"),
+    all_files = TRUE
+  )
+}
+
+# Icon URLs are written into answers, which saved conversations replay after
+# a reinstall or redeploy, so unlike commons-chat's, this version never changes.
+commons_icons_dependency <- function() {
+  htmltools::htmlDependency(
+    name = "commons-icons",
+    version = "1.0",
+    src = c(
+      file = system.file("www", "commons-chat", "figs", package = "commons")
+    ),
     all_files = TRUE
   )
 }

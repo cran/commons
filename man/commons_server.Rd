@@ -13,7 +13,7 @@ commons_theme(..., preset = "shiny")
 \item{id}{The ID of the chat element; must match the \code{id} of the
 \code{\link[shinychat:page_chat]{shinychat::page_chat()}} or \code{\link[shinychat:chat_ui]{shinychat::chat_ui()}} on the page.}
 
-\item{client}{A \code{\link[=commons]{commons()}} agent. In a deployed app, create the agent
+\item{client}{An \code{\link[=agent]{agent()}}. In a deployed app, create the agent
 inside the server function and pass it to \code{commons_server()} so each
 Shiny session gets its own agent state.}
 
@@ -34,10 +34,32 @@ with \code{\link[shinychat:page_chat]{shinychat::page_chat()}} or \code{\link[sh
 \code{theme = commons_theme()} so the commons chat assets are on the page.
 }
 \details{
+The agent writes R code at runtime, so deployment tools can't detect the
+packages it uses. Include them in the deployment, e.g. by listing the
+tidyverse in the app's \code{DESCRIPTION}; see
+\code{vignette("commons", package = "commons")}.
+
+Documents the agent writes open in the chat's drawer, which
+\code{\link[shinychat:page_chat]{shinychat::page_chat()}} and \code{\link[shinychat:chat_ui]{shinychat::chat_ui()}} enable by default. An app
+that passes \code{drawer = FALSE} gets no documents in view, though the agent
+still writes them. Documents read best in a wider drawer than the default,
+e.g. \code{drawer = shinychat::chat_drawer(width = 640, open = FALSE)}.
+
 \code{commons_theme()} bundles the commons chat CSS and JavaScript into an
 ordinary \code{\link[bslib:bs_theme]{bslib::bs_theme()}} (via \code{\link[shinychat:page_chat_theme]{shinychat::page_chat_theme()}}), so it
 works anywhere a bslib theme does.
 }
+\section{Sharing on Posit Connect}{
+
+On Posit Connect, viewers can publish a read-only copy of a conversation,
+document, plot, or table. Sharing is available only when the app runs on
+Posit Connect. Shared items are published as the viewer who shares it, so
+only viewers whose Connect account can publish content can share. Items
+can only be shared with people who can view the commons apps. Sharing
+works on a default Connect installation, but administrators may have
+turned it off.
+}
+
 \examples{
 \dontrun{
 library(shiny)
@@ -47,9 +69,9 @@ ui <- page_chat("Assistant", id = "chat", theme = commons_theme())
 
 server <- function(input, output, session) {
   # One agent per session, so each user gets their own agent state
-  agent <- commons(
+  agent <- agent(
     ellmer::chat_anthropic(),
-    data_sources = data_source(sales = sales)
+    commons = commons(data_sources = data_source(sales = sales))
   )
   commons_server("chat", agent)
 }

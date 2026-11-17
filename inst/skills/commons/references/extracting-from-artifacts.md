@@ -17,7 +17,7 @@ The user decides which artifacts and calculations are trusted. Do not treat code
 
 ## Workflow
 
-1. Locate the agent project. Find the `commons()` definition and the existing semantic layer, dictionaries (`dictionaries/*.yaml`), and context files. If no agent project is found, say so and stop — this reference does not scaffold one.
+1. Locate the agent project. Find the `agent()` and `commons()` calls and the existing semantic layer, dictionaries (`dictionaries/*.yaml`), and context files. If no agent project is found, say so and stop — this reference does not scaffold one.
 
 2. Establish runnable access. Treat extraction as a code-running workflow, not a static source review. Confirm access to the artifact, each data source it uses, and its runtime dependencies. Use the project's existing authentication and configuration mechanisms. If credentials are missing, ask the user to provide authorized, preferably read-only access through an appropriate secret-management mechanism. Never write credential values to the agent project, agent instruction files, proposals, or logs.
 
@@ -47,14 +47,16 @@ The user decides which artifacts and calculations are trusted. Do not treat code
 
 6. Draft free-text context. Knowledge that is neither a callable calculation nor table/column-scoped — methodology prose, business rules, terminology — goes to `context/<artifact>.md`, one file per artifact. Carry the provenance string in YAML frontmatter (`context_layer()` strips frontmatter before indexing, so it never reaches the model).
 
-7. Reconcile against existing context. Classify each candidate against what the agent already has:
+7. Reconcile against existing context. Two measures are the same concept if their results mean the same thing, even if their names differ. Compare each candidate with existing measures and definitions that read the same tables or answer a similar question, running both where they overlap. Classify each candidate against what the agent already has:
    - **new** — add it.
    - **duplicate** — same concept, same computation: do not create another contribution. For a measure, add `@provenance` to the existing measure.
    - **extension** — same concept, superset behavior: propose editing the existing contribution. For a measure, add the relevant `@param` and `@provenance` entries. Never create `revenue2`.
    - **conflict** — same concept but a different computation, or a contradiction with an existing dictionary caveat: surface to the user with both sides. Do not resolve silently.
 
-8. Wait before editing. Present proposals highest-value first (mirroring the iterate reference) and apply only what the user confirms. The data scientist should confirm any new business definition, canonical table, exclusion rule, or dictionary caveat.
+8. Wait before editing. Present proposals highest-value first (mirroring the iterate reference) and apply only what the user confirms. For each proposed measure, say briefly how it relates to the closest existing measures. The data scientist should confirm any new business definition, canonical table, exclusion rule, or dictionary caveat.
 
 9. Validate. Confirm `semantic_layer("measures/")` loads without error. Validate dictionary edits and governed definitions using the [data dictionary reference](data-dictionaries.md).
 
    Run each accepted measure and governed definition against the live source with representative inputs. Compare its value, shape, grouping, filtering, and missing-value behavior with the original artifact computation. Resolve mismatches before treating extraction as complete. If the original and extracted computations cannot both be run, record that fidelity remains unverified.
+
+   Then check that the agent reaches for each accepted measure: ask a fresh agent one or two questions a human user might ask—briefly and without naming the measure—and look in `agent$get_turns()` for a `call_measure` request naming it. If the agent misses it, improve the measure's documentation, not by adding wording that only matches the test question. When extracting as part of onboarding, wait until the agent is built in onboarding step 10 to run this check.

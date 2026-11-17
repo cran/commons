@@ -4,6 +4,12 @@ is_snowflake_connection <- function(con) {
   rlang::is_string(name) && identical(tolower(name), "snowflake")
 }
 
+# Snowflake reads a backslash in a string literal as an escape, and DBI's
+# quoting escapes only the quote character.
+snowflake_quote_string <- function(con, x) {
+  as.character(DBI::dbQuoteString(con, gsub("\\", "\\\\", x, fixed = TRUE)))
+}
+
 snowflake_table_registry <- function(
   con,
   tables = NULL,
@@ -41,6 +47,10 @@ snowflake_table_registry <- function(
     snowflake_read_semantic_model,
     con = con,
     call = call
+  )
+  registry$semantic_models <- lapply(
+    registry$semantic_models,
+    snowflake_require_public_member
   )
   unsupported <- vapply(
     registry$semantic_models,
@@ -84,6 +94,19 @@ snowflake_table_registry <- function(
     call = call
   )
   catalog_check_nonempty(registry, call = call)
+}
+
+snowflake_require_public_member <- function(model) {
+  if (
+    inherits(model, "commons_unsupported_snowflake_semantic_view") ||
+      length(model$metrics) + length(model$dimensions) + length(model$facts) > 0L
+  ) {
+    return(model)
+  }
+  snowflake_unsupported_semantic_view(
+    model$id,
+    "The view has no public metric, dimension, or fact."
+  )
 }
 
 snowflake_abort_unsupported_semantic_views <- function(models, call) {
@@ -203,7 +226,19 @@ snowflake_catalog_selection <- function(
     function(view) table_id_label(view$id, call = call),
     character(1)
   )
-  duplicated_labels <- unique(semantic_labels[duplicated(semantic_labels)])
+  # A view named exactly keeps the label it was named by, so the same view
+  # reached through its namespace too is found by its warehouse identity.
+  semantic_keys <- vapply(
+    semantic_views,
+    function(view) {
+      semantic_id_key(view$identity %||% view$id, "snowflake_semantic_view")
+    },
+    character(1)
+  )
+  duplicated_labels <- unique(semantic_labels[
+    semantic_labels %in% semantic_labels[duplicated(semantic_labels)] |
+      semantic_keys %in% semantic_keys[duplicated(semantic_keys)]
+  ])
   if (length(duplicated_labels)) {
     cli::cli_abort(
       "{.arg tables} must not select duplicate semantic models: {.val {duplicated_labels}}.",
@@ -499,7 +534,6 @@ snowflake_read_semantic_model <- function(
   con,
   call = rlang::caller_env()
 ) {
-  rlang::check_installed("yaml", call = call)
   label <- as.character(DBI::dbQuoteIdentifier(con, view$id))
   sql <- paste0(
     "SELECT SYSTEM$READ_YAML_FROM_SEMANTIC_VIEW(",
@@ -517,7 +551,7 @@ snowflake_read_semantic_model <- function(
     }
   )
   specification <- tryCatch(
-    yaml::yaml.load(text),
+    yaml::yaml.load(text, handlers = yaml12_booleans()),
     error = function(err) {
       cli::cli_abort(
         "Snowflake semantic view {.val {label}} returned invalid YAML.",
@@ -530,16 +564,13 @@ snowflake_read_semantic_model <- function(
     snowflake_semantic_model_from_spec(
       view$id,
       specification,
-      description = view$description
+      description = view$description,
+      identity = view$identity %||% view$id
     ),
     commons_unsupported_semantic_parameter = function(err) {
       snowflake_unsupported_semantic_view(view$id, conditionMessage(err))
     }
   )
-  if (inherits(model, "commons_unsupported_snowflake_semantic_view")) {
-    return(model)
-  }
-  model$identity <- view$identity %||% view$id
   model
 }
 
@@ -553,7 +584,8 @@ snowflake_unsupported_semantic_view <- function(id, reason) {
 snowflake_semantic_model_from_spec <- function(
   id,
   specification,
-  description = NULL
+  description = NULL,
+  identity = id
 ) {
   dimensions <- list()
   facts <- list()
@@ -586,12 +618,19 @@ snowflake_semantic_model_from_spec <- function(
     metrics,
     snowflake_semantic_members(specification$metrics, "metric")
   )
-  dependencies <- snowflake_semantic_dependencies(id, specification)
-  relationships <- specification$relationships %||% list()
+  # A base table without a namespace is in the view's own, which the label a
+  # caller wrote need not spell out.
+  dependencies <- snowflake_semantic_dependencies(identity, specification)
+  relationships <- semantic_spec_entries(specification$relationships)
   parameters <- semantic_parameters_from_spec(
     specification$variables,
     "Snowflake"
   )
+  for (entry in semantic_spec_entries(specification$variables)) {
+    parameters[[entry$name]]$sql_type <- snowflake_semantic_sql_type(
+      entry$data_type %||% entry$type
+    )
+  }
   calculations <- snowflake_verified_calculations(
     specification$verified_queries
   )
@@ -607,6 +646,7 @@ snowflake_semantic_model_from_spec <- function(
     name = specification$name %||% id@name[["table"]],
     description = specification$description %||% description,
     backend = "snowflake_semantic_view",
+    identity = identity,
     dimensions = dimensions,
     metrics = metrics,
     facts = facts,
@@ -657,7 +697,7 @@ snowflake_semantic_members <- function(entries, kind, parent = NULL) {
       name,
       kind,
       parent = parent,
-      label = item$label,
+      label = item[["label"]],
       description = item$description %||% item$comment,
       type = item$data_type,
       synonyms = unlist(item$synonyms %||% character(), use.names = FALSE),
@@ -681,9 +721,11 @@ snowflake_semantic_dependencies <- function(id, specification) {
   complete <- TRUE
   for (table in semantic_spec_entries(specification$tables)) {
     base <- table$base_table %||% list()
-    table_name <- base$table
-    catalog <- base$database %||% base$catalog %||% model[["catalog"]]
-    schema <- base$schema %||% model[["schema"]]
+    # If base_table has no database or schema, use the view's as-is.
+    table_name <- snowflake_yaml_identifier(base$table)
+    catalog <- snowflake_yaml_identifier(base$database %||% base$catalog) %||%
+      model[["catalog"]]
+    schema <- snowflake_yaml_identifier(base$schema) %||% model[["schema"]]
     if (
       !rlang::is_string(catalog) ||
         !rlang::is_string(schema) ||
@@ -705,6 +747,17 @@ snowflake_semantic_dependencies <- function(id, specification) {
     backend = "snowflake_semantic_view"
   )
   list(ids = ids[!duplicated(keys)], complete = complete && length(ids) > 0L)
+}
+
+# Strip quotes from a quoted name ("" is one quote); upper-case others (see #446).
+snowflake_yaml_identifier <- function(name) {
+  if (!rlang::is_string(name)) {
+    return(NULL)
+  }
+  if (grepl('^".*"$', name)) {
+    return(gsub('""', '"', substr(name, 2L, nchar(name) - 1L), fixed = TRUE))
+  }
+  toupper(name)
 }
 
 snowflake_semantic_context <- function(
@@ -787,16 +840,7 @@ snowflake_semantic_metric_sql <- function(
       paste(snowflake_semantic_member_references(metrics, con), collapse = ", ")
     ),
     if (length(arguments)) {
-      paste(
-        "VARIABLES",
-        paste(
-          sprintf(
-            "%s => ?",
-            DBI::dbQuoteIdentifier(con, names(arguments))
-          ),
-          collapse = ", "
-        )
-      )
+      snowflake_semantic_variables(con, model, names(arguments))
     }
   )
   conditions <- c(
@@ -810,6 +854,35 @@ snowflake_semantic_metric_sql <- function(
     "SELECT * FROM SEMANTIC_VIEW(\n  ",
     paste(parts, collapse = "\n  "),
     "\n)"
+  )
+}
+
+# Snowflake rejects a value with a mismatched type, so a variable is cast to its
+# declared type. The type is spliced into SQL, so it is kept only when it is a
+# sequence of letters and underscores, optionally followed by a numeric
+# precision and scale (e.g. `TIMESTAMP_TZ`, `VARCHAR(16)`, `NUMBER(10, 2)`).
+snowflake_semantic_sql_type <- function(declared_type) {
+  if (
+    !grepl("^[A-Za-z_]+( *\\( *[0-9]+( *, *[0-9]+)? *\\))?$", declared_type)
+  ) {
+    return(NULL)
+  }
+  toupper(gsub(" ", "", declared_type, fixed = TRUE))
+}
+
+snowflake_semantic_variables <- function(con, model, names) {
+  placeholders <- vapply(names, function(name) {
+    type <- model$parameters[[name]]$sql_type
+    if (is.null(type)) "?" else sprintf("CAST(? AS %s)", type)
+  }, character(1))
+  paste(
+    "VARIABLES",
+    paste(
+      DBI::dbQuoteIdentifier(con, names),
+      "=>",
+      placeholders,
+      collapse = ", "
+    )
   )
 }
 
@@ -834,7 +907,8 @@ snowflake_semantic_where <- function(where, members, con) {
     where,
     members,
     con,
-    snowflake_semantic_member_references
+    snowflake_semantic_member_references,
+    quote_string = function(value) snowflake_quote_string(con, value)
   )
 }
 

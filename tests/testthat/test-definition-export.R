@@ -1,5 +1,4 @@
 test_that("landed definition envelopes export inferred records", {
-  skip_if_not_installed("yaml")
   path <- definition_fixture_path("core.yaml")
   export <- definition_export_spec(yaml::read_yaml(path))
   definitions <- export$tables$orders$definitions
@@ -35,7 +34,6 @@ test_that("the expression parser preserves data-dict precedence", {
 })
 
 test_that("quoted definition names and struct fields resolve separately", {
-  skip_if_not_installed("yaml")
   path <- definition_fixture_path("language.yaml")
   definitions <- definition_export_spec(yaml::read_yaml(
     path
@@ -52,7 +50,6 @@ test_that("quoted definition names and struct fields resolve separately", {
 })
 
 test_that("COLUMNS selections expand in DuckDB translations", {
-  skip_if_not_installed("yaml")
   path <- definition_fixture_path("language.yaml")
   definitions <- definition_export_spec(yaml::read_yaml(
     path
@@ -71,7 +68,6 @@ test_that("COLUMNS selections expand in DuckDB translations", {
 })
 
 test_that("DuckDB mappings carry data-dict fidelity notes", {
-  skip_if_not_installed("yaml")
   path <- definition_fixture_path("functions.yaml")
   definitions <- definition_export_spec(yaml::read_yaml(
     path
@@ -97,7 +93,6 @@ test_that("DuckDB mappings carry data-dict fidelity notes", {
 })
 
 test_that("DuckDB literals use data-dict's canonical forms", {
-  skip_if_not_installed("yaml")
   path <- definition_fixture_path("language.yaml")
   definitions <- definition_export_spec(yaml::read_yaml(
     path
@@ -126,24 +121,26 @@ test_that("DuckDB literals use data-dict's canonical forms", {
 })
 
 test_that("valid definition fixtures pass the local exporter", {
-  skip_if_not_installed("yaml")
   for (path in definition_fixture_paths("valid")) {
     expect_no_error(definition_export_spec(yaml::read_yaml(path)))
   }
 })
 
-test_that("invalid definition fixtures fail the local exporter", {
-  skip_if_not_installed("yaml")
-  for (path in definition_fixture_paths("invalid")) {
-    expect_error(
+test_that("invalid definition fixtures fail the local exporter with their code", {
+  codes <- shared_fixture("definitions")$invalid
+  paths <- definition_fixture_paths("invalid")
+  expect_setequal(basename(paths), names(codes))
+  for (path in paths) {
+    error <- expect_error(
       definition_export_spec(yaml::read_yaml(path)),
+      class = "commons_definition_invalid_error",
       info = basename(path)
     )
+    expect_identical(error$code, codes[[basename(path)]], info = basename(path))
   }
 })
 
 test_that("the local export agrees with an installed data-dict", {
-  skip_if_not_installed("yaml")
   for (path in definition_fixture_paths("valid")) {
     validation <- data_dict_cli_run(c("validate-spec", path, "--json"))
     expect_identical(
@@ -181,7 +178,6 @@ test_that("invalid fixtures also fail an installed data-dict", {
 })
 
 test_that("the export matches the shared definitions contract", {
-  skip_if_not_installed("yaml")
   spec <- shared_fixture("definitions")
   paths <- definition_fixture_paths("valid")
   expect_gt(length(paths), 0)
@@ -199,7 +195,6 @@ test_that("the export matches the shared definitions contract", {
 })
 
 test_that("grain metadata matches the shared definitions contract", {
-  skip_if_not_installed("yaml")
   spec <- shared_fixture("definitions")
 
   for (path in definition_fixture_paths("valid")) {

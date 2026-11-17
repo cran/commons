@@ -91,20 +91,23 @@ ui <- page_chat(
   "Biodiversity explorer",
   id = "chat",
   greeting = greeting,
-  theme = commons_theme()
+  theme = commons_theme(),
+  drawer = chat_drawer(width = 640, open = FALSE)
 )
 
 server <- function(input, output, session) {
-  agent <- commons(
+  agent <- agent(
     ellmer::chat_anthropic(),
-    log = TRUE,
-    data_sources = list(
-      warehouse = data_source(
-        observations = observations,
-        site_area = site_area
-      )
+    commons = commons(
+      data_sources = list(
+        warehouse = data_source(
+          observations = observations,
+          site_area = site_area
+        )
+      ),
+      semantic_layer = semantics
     ),
-    semantic_layer = semantics
+    log = TRUE
   )
 
   commons_server("chat", agent)

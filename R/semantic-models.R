@@ -114,6 +114,13 @@ semantic_parameters_from_spec <- function(entries, backend) {
     default <- if (has_default) {
       coerce_semantic_default(entry[[default_field]], type)
     }
+    if (has_default && !semantic_default_valid(name, type, default)) {
+      article <- if (identical(type, "integer")) "an" else "a"
+      cli::cli_abort(
+        "{backend} semantic parameter {.val {name}} has a default that is not {article} {type} value.",
+        class = "commons_unsupported_semantic_parameter"
+      )
+    }
     new_typed_argument(
       name,
       type,
@@ -124,9 +131,24 @@ semantic_parameters_from_spec <- function(entries, backend) {
   })
   names(parameters) <- vapply(parameters, `[[`, character(1), "name")
   if (anyDuplicated(names(parameters))) {
-    cli::cli_abort("{backend} semantic parameter names must be unique.")
+    duplicate <- names(parameters)[anyDuplicated(names(parameters))]
+    cli::cli_abort(
+      "{backend} semantic parameter {.val {duplicate}} is declared more than once.",
+      class = "commons_unsupported_semantic_parameter"
+    )
   }
   parameters
+}
+
+semantic_default_valid <- function(name, type, default) {
+  specification <- list(name = name, type = type, identifier = FALSE)
+  tryCatch(
+    {
+      validate_typed_value(default, specification)
+      TRUE
+    },
+    error = function(err) FALSE
+  )
 }
 
 coerce_semantic_default <- function(value, type) {
@@ -161,9 +183,13 @@ semantic_parameter_type <- function(type) {
   if (base %in% c("BYTEINT", "SMALLINT", "INT", "INTEGER", "BIGINT")) {
     return("integer")
   }
-  if (base %in% c(
-    "NUMBER", "NUMERIC", "DECIMAL", "FLOAT", "DOUBLE", "REAL"
-  )) {
+  if (base %in% c("NUMBER", "NUMERIC", "DECIMAL")) {
+    # Casting a fraction to scale 0 (the default) rounds it silently. Typing
+    # the parameter as an integer rejects the fraction instead.
+    scale <- regmatches(type, regexec(",\\s*([0-9]+)\\s*\\)", type))[[1]][2]
+    return(if (is.na(scale) || as.integer(scale) == 0L) "integer" else "number")
+  }
+  if (base %in% c("FLOAT", "DOUBLE", "REAL")) {
     return("number")
   }
   if (base %in% c("BOOL", "BOOLEAN")) {
@@ -717,6 +743,7 @@ semantic_where_conditions <- function(
   members,
   con,
   member_references,
+  quote_string,
   call = rlang::caller_env()
 ) {
   vapply(normalize_where(where), function(triple) {
@@ -743,10 +770,12 @@ semantic_where_conditions <- function(
       call = call
     )
     reference <- member_references(dimension, con)
-    value <- if (grepl("^-?[0-9]+(\\.[0-9]+)?$", triple$value)) {
+    value <- if (
+      !isTRUE(triple$quoted) && grepl("^-?[0-9]+(\\.[0-9]+)?$", triple$value)
+    ) {
       triple$value
     } else {
-      as.character(DBI::dbQuoteString(con, triple$value))
+      quote_string(triple$value)
     }
     sprintf("(%s %s %s)", reference, triple$op, value)
   }, character(1))
@@ -756,8 +785,10 @@ semantic_member_pool_text <- function(
   member,
   members,
   source_names = character(),
-  parameters = list()
+  parameters = list(),
+  methods = FALSE
 ) {
+  call_metrics <- if (methods) "`$metrics()`" else "call_metrics"
   reference <- if (nrow(semantic_member_candidates(member$name[[1]], members)) == 1L) {
     member$name[[1]]
   } else {
@@ -774,28 +805,30 @@ semantic_member_pool_text <- function(
         detail
       ),
       semantic_member_sources_line(member, source_names),
-      semantic_parameters_pool_text(parameters),
+      semantic_parameters_pool_text(parameters, methods = methods),
       switch(
         member$kind[[1]],
-        metric = sprintf(
-          "Query with call_metrics (metrics = [\"%s\"]).",
-          reference
-        ),
+        metric = if (methods) {
+          sprintf("Query with `$metrics(\"%s\")`.", reference)
+        } else {
+          sprintf("Query with call_metrics (metrics = [\"%s\"]).", reference)
+        },
         dimension = sprintf(
-          "Use as a call_metrics dimension: %s.",
+          "Use as a %s dimension: %s.",
+          call_metrics,
           reference
         ),
         NULL
       ),
       if (isTRUE(member$filter[[1]])) {
-        sprintf("May be applied as a call_metrics filter: %s.", reference)
+        sprintf("May be applied as a %s filter: %s.", call_metrics, reference)
       }
     ),
     collapse = "\n"
   )
 }
 
-semantic_parameters_pool_text <- function(parameters) {
+semantic_parameters_pool_text <- function(parameters, methods = FALSE) {
   if (length(parameters) == 0L) {
     return(NULL)
   }
@@ -817,7 +850,7 @@ semantic_parameters_pool_text <- function(parameters) {
     )
   }, character(1))
   paste0(
-    "call_metrics arguments JSON: ",
+    if (methods) "`$metrics()` arguments: " else "call_metrics arguments JSON: ",
     paste(entries, collapse = ", "),
     "."
   )

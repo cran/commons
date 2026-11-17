@@ -123,7 +123,11 @@ catalog_search <- function(source, query, kinds = NULL, limit = 10L) {
         "{.arg kinds} must be a character vector without missing values."
       )
     }
-    relations <- Filter(function(relation) relation$kind %in% kinds, relations)
+    # A relation without a kind must still yield one value, or Filter() misaligns.
+    relations <- Filter(
+      function(relation) isTRUE(relation$kind %in% kinds),
+      relations
+    )
   }
   query_terms <- catalog_search_terms(query)
   if (length(query_terms) == 0L || length(relations) == 0L) {
@@ -382,8 +386,7 @@ catalog_merge_dictionary <- function(
     relations = relations,
     definition_bindings = list(
       tables = matches,
-      columns = column_matches,
-      strict = TRUE
+      columns = column_matches
     )
   )
 }
@@ -444,6 +447,10 @@ catalog_dictionary_matches <- function(
       cli::cli_abort(
         "Authored tables {.val {c(other, authored_name)}} both match selected
          relation {.val {label}}.",
+        class = c(
+          "commons_catalog_claimed_relation_error",
+          "commons_catalog_merge_error"
+        ),
         call = call
       )
     }
@@ -530,6 +537,10 @@ catalog_abort_ambiguous_dictionary_table <- function(
        relation: {.val {matches}}.",
       "i" = "Use its fully qualified name in the data dictionary."
     ),
+    class = c(
+      "commons_catalog_ambiguous_table_error",
+      "commons_catalog_merge_error"
+    ),
     call = call
   )
 }
@@ -593,6 +604,10 @@ catalog_merge_dictionary_columns <- function(
       cli::cli_abort(
         "Authored column {.val {authored_name}} matches more than one discovered
          column: {.val {names(out)[candidates]}}.",
+        class = c(
+          "commons_catalog_ambiguous_column_error",
+          "commons_catalog_merge_error"
+        ),
         call = call
       )
     }

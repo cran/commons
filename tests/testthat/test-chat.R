@@ -9,18 +9,22 @@ test_that("commons_app builds a single-user app on page_chat", {
 
   app_env <- environment(app$serverFuncSource)
   ui <- app_env$ui(NULL)
-  chat <- htmltools::tagQuery(ui)$find("shiny-chat-container")$selectedTags()
   deps <- htmltools::findDependencies(ui)
 
-  expect_length(chat, 1)
-  # Left unset so chat_server() decides (it enables both automatically).
-  expect_null(chat[[1]]$attribs[["allow-attachments"]])
-  expect_null(chat[[1]]$attribs[["enable-cancel"]])
   expect_true("commons-chat" %in% vapply(deps, `[[`, character(1), "name"))
 
   shiny::testServer(app_env$server, {
     session$flushReact()
   })
+
+  # shiny-chat-container is private to shinychat; skipped on CRAN so
+  # shinychat's reverse dependency checks don't fail.
+  skip_on_cran()
+  chat <- htmltools::tagQuery(ui)$find("shiny-chat-container")$selectedTags()
+  expect_length(chat, 1)
+  # Left unset so chat_server() decides (it enables both automatically).
+  expect_null(chat[[1]]$attribs[["allow-attachments"]])
+  expect_null(chat[[1]]$attribs[["enable-cancel"]])
 })
 
 test_that("commons_server registers no custom-message observers", {
@@ -44,6 +48,9 @@ test_that("commons_server runs under shiny::testServer without error", {
 })
 
 test_that("commons_server queues a restore reminder when history is restored", {
+  # Drives shinychat internals; skipped on CRAN so shinychat's reverse
+  # dependency checks don't fail.
+  skip_on_cran()
   skip_if_not_installed("shiny")
   skip_if_not_installed("shinychat")
 
@@ -68,6 +75,57 @@ test_that("commons_server queues a restore reminder when history is restored", {
   )
 })
 
+test_that("documents are saved with the chat and editable once restored", {
+  # Drives shinychat internals; skipped on CRAN so shinychat's reverse
+  # dependency checks don't fail.
+  skip_on_cran()
+  skip_if_not_installed("shiny")
+  skip_if_not_installed("shinychat")
+
+  history_controller <- function(session) {
+    shinychat:::get_session_chat_bookmark_info(
+      session,
+      "chat.history-controller"
+    )
+  }
+
+  values <- NULL
+  shiny::testServer(
+    function(input, output, session) {
+      agent <- test_agent()
+      commons_server("chat", client = agent)
+    },
+    {
+      store <- agent$artifact_store()
+      wait_for_promise(artifact_commit(store, "doc", "Doc", "First.\n")$rendered)
+      wait_for_promise(artifact_edit(store, "doc", "First.", "Second."))
+      # shinychat has no public hook to save under testServer.
+      values <<- history_controller(session)$.__enclos_env__$private$capture_app_state()
+    }
+  )
+  expect_length(values$commons_artifacts$doc$sources, 2)
+  # History persists values as JSON.
+  values <- jsonlite::fromJSON(jsonlite::toJSON(values, auto_unbox = TRUE))
+
+  shiny::testServer(
+    function(input, output, session) {
+      agent <- test_agent()
+      commons_server("chat", client = agent)
+    },
+    {
+      history_controller(session)$restore_app_state(values)
+      store <- agent$artifact_store()
+      result <- wait_for_promise(artifact_edit(store, "doc", "Second.", "Third."))
+      expect_identical(result@value, "Saved version 3 of `doc`.")
+      expect_match(
+        paste(artifact_get(store, "doc")$html, collapse = ""),
+        "Third.",
+        fixed = TRUE
+      )
+    }
+  )
+})
+
 test_that("commons_theme() bundles the commons chat assets", {
   theme <- commons_theme()
 
@@ -77,17 +135,27 @@ test_that("commons_theme() bundles the commons chat assets", {
   expect_true("commons-chat" %in% names)
 
   commons_dep <- deps[[which(names == "commons-chat")]]
-  expect_identical(commons_dep$stylesheet, "commons-chat.css")
-  expect_identical(commons_dep$script, "commons-chat.js")
+  expect_identical(
+    commons_dep$stylesheet,
+    c("commons-chat.css", "commons-artifact.css")
+  )
+  expect_identical(
+    commons_dep$script,
+    c("commons-chat.js", "commons-artifact.js")
+  )
 })
 
-test_that("icon URLs resolve inside the commons-chat dependency", {
+test_that("icon URLs resolve inside the commons-icons dependency", {
   url <- commons_icon_url("trusted-icon.svg")
-  expect_match(url, "^commons-chat-[^/]+/figs/trusted-icon\\.svg$")
+  expect_identical(url, "commons-icons-1.0/trusted-icon.svg")
 
   # The dependency ships the file the URL points to
-  dep <- commons_chat_dependency()
-  expect_true(file.exists(file.path(dep$src$file, "figs", "trusted-icon.svg")))
+  dep <- commons_icons_dependency()
+  expect_true(file.exists(file.path(dep$src$file, "trusted-icon.svg")))
+
+  # And commons_theme() puts it on the page
+  deps <- htmltools::findDependencies(bslib::bs_theme_dependencies(commons_theme()))
+  expect_true("commons-icons" %in% vapply(deps, `[[`, "", "name"))
 })
 
 test_that("commons_app requires a commons agent", {

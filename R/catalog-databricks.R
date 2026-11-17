@@ -5,6 +5,15 @@ is_databricks_connection <- function(con) {
   length(labels) > 0L && any(grepl("databricks", labels, ignore.case = TRUE))
 }
 
+# Databricks reads a backslash in a string literal as an escape and joins
+# adjacent literals, so 'O''Brien' reads as OBrien. Both characters are
+# escaped with a backslash, whatever class the connection has.
+databricks_quote_string <- function(x) {
+  x <- gsub("\\", "\\\\", x, fixed = TRUE)
+  x <- gsub("'", "\\'", x, fixed = TRUE)
+  paste0("'", x, "'")
+}
+
 databricks_table_registry <- function(
   con,
   tables = NULL,
@@ -237,19 +246,19 @@ databricks_list_unity_relations <- function(
   predicates <- c(
     paste0(
       "table_catalog = ",
-      DBI::dbQuoteString(con, components[["catalog"]])
+      databricks_quote_string(components[["catalog"]])
     ),
     "table_schema <> 'information_schema'",
     if ("schema" %in% names(components)) {
       paste0(
         "table_schema = ",
-        DBI::dbQuoteString(con, components[["schema"]])
+        databricks_quote_string(components[["schema"]])
       )
     },
     if ("table" %in% names(components)) {
       paste0(
         "table_name = ",
-        DBI::dbQuoteString(con, components[["table"]])
+        databricks_quote_string(components[["table"]])
       )
     }
   )
@@ -317,13 +326,14 @@ databricks_relations_from_information_schema <- function(
       rows$table_schema[[i]],
       rows$table_name[[i]]
     )
-    object_type <- unname(object_types[key])
-    if (length(object_type) == 0L || is.na(object_type)) {
-      object_type <- rows$table_type[[i]]
-    }
-    kind <- if (grepl("metric", object_type, ignore.case = TRUE)) {
+    # ODBC reports a Unity Catalog metric view as VIEW, where
+    # information_schema says METRIC_VIEW, so either source naming a metric
+    # view decides.
+    types <- c(rows$table_type[[i]], unname(object_types[key]))
+    types <- types[!is.na(types)]
+    kind <- if (any(grepl("metric", types, ignore.case = TRUE))) {
       "metric_view"
-    } else if (grepl("view", object_type, ignore.case = TRUE)) {
+    } else if (any(grepl("view", types, ignore.case = TRUE))) {
       "view"
     } else {
       "table"
@@ -442,7 +452,6 @@ databricks_read_semantic_model <- function(
   con,
   call = rlang::caller_env()
 ) {
-  rlang::check_installed("yaml", call = call)
   id <- databricks_complete_relation(con, view$id, call = call)
   label <- table_id_label(id, call = call)
   metadata <- NULL
@@ -450,6 +459,15 @@ databricks_read_semantic_model <- function(
   if (is.null(text)) {
     metadata <- databricks_metric_view_metadata(con, id)
     text <- metadata$view_text %||% metadata$viewText
+    if (is.null(text) && isTRUE(metadata$view_text_truncated)) {
+      cli::cli_abort(
+        c(
+          "Databricks metric view {.val {label}} has a definition longer than the ODBC driver returns.",
+          i = "Raise the connection's {.code DefaultStringColumnLength}, for example to 32767."
+        ),
+        call = call
+      )
+    }
   }
   if (is.null(text)) {
     cli::cli_abort(
@@ -458,7 +476,7 @@ databricks_read_semantic_model <- function(
     )
   }
   specification <- tryCatch(
-    yaml::yaml.load(text),
+    yaml::yaml.load(text, handlers = yaml12_booleans()),
     error = function(err) {
       cli::cli_abort(
         "Databricks metric view {.val {label}} returned invalid YAML.",
@@ -520,12 +538,60 @@ databricks_metric_view_metadata <- function(con, id) {
     )[[1]][[1]],
     error = function(err) NULL
   )
-  if (is.null(text)) {
-    return(list())
+  metadata <- if (!is.null(text)) {
+    tryCatch(
+      jsonlite::fromJSON(text, simplifyVector = FALSE),
+      error = function(err) NULL
+    )
   }
-  tryCatch(
-    jsonlite::fromJSON(text, simplifyVector = FALSE),
-    error = function(err) list()
+  if (!is.null(metadata)) {
+    return(metadata)
+  }
+  # The ODBC driver cuts a string column at its DefaultStringColumnLength, so
+  # JSON that fails to parse gives the length it was cut to.
+  limit <- if (!is.null(text)) nchar(text, type = "bytes")
+  databricks_described_metric_view(con, id, limit) %||% list()
+}
+
+# A metric view's JSON metadata can outgrow the ODBC driver's string length,
+# so the plain DESCRIBE gives the same metadata in rows: the columns, with
+# " measure" after a measure's type, and the YAML in the "View Text" row.
+# YAML cut at `limit` could still parse with members missing, so text that
+# reaches it is dropped and reported as truncated.
+databricks_described_metric_view <- function(con, id, limit = NULL) {
+  rows <- tryCatch(
+    DBI::dbGetQuery(
+      con,
+      paste("DESCRIBE TABLE EXTENDED", DBI::dbQuoteIdentifier(con, id))
+    ),
+    error = function(err) NULL
+  )
+  if (is.null(rows) || nrow(rows) == 0L) {
+    return(NULL)
+  }
+  names(rows) <- tolower(names(rows))
+  names <- rows$col_name
+  section <- which(is.na(names) | !nzchar(trimws(names)) | startsWith(names, "#"))
+  count <- if (length(section) > 0L) section[[1]] - 1L else nrow(rows)
+  columns <- lapply(seq_len(count), function(i) {
+    type <- rows$data_type[[i]]
+    comment <- rows$comment[[i]]
+    list(
+      name = names[[i]],
+      type = sub("\\s+measure$", "", type),
+      comment = if (!is.na(comment) && nzchar(comment)) comment,
+      is_measure = grepl("\\s+measure$", type)
+    )
+  })
+  text <- rows$data_type[which(names == "View Text")]
+  text <- if (length(text) > 0L && !is.na(text[[1]])) text[[1]]
+  truncated <- !is.null(text) &&
+    !is.null(limit) &&
+    nchar(text, type = "bytes") >= limit
+  list(
+    view_text = if (!truncated) text,
+    view_text_truncated = truncated,
+    columns = columns
   )
 }
 
@@ -542,9 +608,9 @@ databricks_view_definition_chunk_size <- 900L
 databricks_view_definition <- function(con, id) {
   components <- id@name
   predicates <- c(
-    paste0("table_catalog = ", DBI::dbQuoteString(con, components[["catalog"]])),
-    paste0("table_schema = ", DBI::dbQuoteString(con, components[["schema"]])),
-    paste0("table_name = ", DBI::dbQuoteString(con, components[["table"]]))
+    paste0("table_catalog = ", databricks_quote_string(components[["catalog"]])),
+    paste0("table_schema = ", databricks_quote_string(components[["schema"]])),
+    paste0("table_name = ", databricks_quote_string(components[["table"]]))
   )
   where <- paste(predicates, collapse = " AND ")
   length_row <- tryCatch(
@@ -638,6 +704,8 @@ databricks_semantic_model_from_spec <- function(
   )
   dependencies <- databricks_semantic_dependencies(specification)
   relationships <- specification$joins %||% list()
+  # A metric view's filter is SQL the view always applies, not a member the
+  # agent can name, so it is described in the context and not listed.
   filters <- Filter(Negate(is.null), list(specification$filter))
   parameters <- semantic_parameters_from_spec(
     specification$parameters,
@@ -655,7 +723,6 @@ databricks_semantic_model_from_spec <- function(
     backend = "databricks_metric_view",
     dimensions = dimensions,
     metrics = metrics,
-    filters = filters,
     parameters = parameters,
     dependencies = dependencies$ids,
     dependencies_complete = dependencies$complete,
@@ -903,7 +970,8 @@ databricks_semantic_metric_sql <- function(
     where,
     members,
     con,
-    databricks_semantic_member_references
+    databricks_semantic_member_references,
+    quote_string = databricks_quote_string
   )
   if (length(conditions)) {
     sql <- paste(sql, "WHERE", paste(conditions, collapse = " AND "))
@@ -951,9 +1019,9 @@ databricks_column_nullability <- function(
     return(logical())
   }
   predicates <- c(
-    paste0("table_catalog = ", DBI::dbQuoteString(con, components[["catalog"]])),
-    paste0("table_schema = ", DBI::dbQuoteString(con, components[["schema"]])),
-    paste0("table_name = ", DBI::dbQuoteString(con, components[["table"]]))
+    paste0("table_catalog = ", databricks_quote_string(components[["catalog"]])),
+    paste0("table_schema = ", databricks_quote_string(components[["schema"]])),
+    paste0("table_name = ", databricks_quote_string(components[["table"]]))
   )
   rows <- tryCatch(
     DBI::dbGetQuery(
